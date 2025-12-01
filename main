@@ -1,0 +1,2580 @@
+--[[
+    SALVATORE HUB - GHOST EDITION (V2.8)
+    
+    Updates V2.8:
+    - MISC: Removido botão "Stop Spectating" (Basta clicar no nome da lista para parar).
+    - MISC: Adicionado "Full Bright" (Remove escuridão/sombras).
+    - MISC: Adicionado "Time Changer" (Muda a hora do jogo).
+]]
+
+-- // 1. INITIALIZATION // --
+local Services = {
+    Players = game:GetService("Players"),
+    RunService = game:GetService("RunService"),
+    UserInputService = game:GetService("UserInputService"),
+    TweenService = game:GetService("TweenService"),
+    HttpService = game:GetService("HttpService"),
+    CoreGui = game:GetService("CoreGui"),
+    Workspace = game:GetService("Workspace"),
+    Teams = game:GetService("Teams"),
+    ReplicatedStorage = game:GetService("ReplicatedStorage"),
+    TextChatService = game:GetService("TextChatService"),
+    SoundService = game:GetService("SoundService"),
+    Lighting = game:GetService("Lighting"),
+    MaterialService = game:GetService("MaterialService")
+}
+
+local LocalPlayer = Services.Players.LocalPlayer
+local Camera = Services.Workspace.CurrentCamera
+local Mouse = LocalPlayer:GetMouse()
+
+-- Global States
+getgenv().SalvatoreRunning = true
+getgenv().SalvatoreLastPos = nil 
+getgenv().SalvatoreTrackingPos = nil 
+getgenv().SalvatoreDeathPos = nil        
+getgenv().SalvatoreAimToggled = false 
+getgenv().SalvatoreFlingTargets = {} 
+getgenv().SalvatoreSpectating = nil -- Jogador sendo espectado
+
+-- FOV Circle
+local FOVCircle = Drawing.new("Circle")
+FOVCircle.Thickness = 1.5
+FOVCircle.NumSides = 64
+FOVCircle.Color = Color3.fromRGB(255, 255, 255)
+FOVCircle.Filled = false
+FOVCircle.Transparency = 1
+FOVCircle.Visible = false
+
+-- Aura Circle
+local AuraCircle = Drawing.new("Circle")
+AuraCircle.Thickness = 1.5
+AuraCircle.NumSides = 32
+AuraCircle.Color = Color3.fromRGB(255, 50, 50)
+AuraCircle.Filled = false
+AuraCircle.Transparency = 0.5
+AuraCircle.Visible = false
+
+-- Prevent Multi-Instance
+if getgenv().SalvatoreInstance then
+    local existingUI = (pcall(function() return Services.CoreGui end) and Services.CoreGui or LocalPlayer.PlayerGui):FindFirstChild("SalvatoreHub")
+    if existingUI then existingUI:Destroy() end
+    getgenv().SalvatoreRunning = false 
+    task.wait(0.1)
+end
+getgenv().SalvatoreInstance = true
+
+-- // 2. CONFIGURATION // --
+local FileName = "Salvatore_Ghost_V2.8.json"
+local Settings = {
+    UI = {
+        Open = true,
+        Position = UDim2.new(0.5, -325, 0.5, -275), 
+        MenuKey = "K", 
+        MenuKeyType = "Keyboard",
+        AutoSave = true,
+        Language = "🇺🇸 English"
+    },
+    Combat = {
+        Enabled = false,
+        AimPart = "Head",
+        AimMethod = "Hold",
+        Smoothing = 1,
+        FOVRadius = 150,
+        ShowFOV = true,
+        TeamCheck = true,
+        TriggerKey = "MouseButton2",
+        TriggerType = "Mouse",
+        StickyAim = true,
+        SmartSwitch = true,
+        Prediction = 0.135, 
+        WallCheck = true,
+        TpOnAim = false,            
+        TpPosition = "Behind", 
+        ExcludedPlayers = {},
+        ExcludedTeams = {}
+    },
+    Visuals = {
+        BoxESP = false,
+        NameESP = false,
+        HealthESP = false,
+        TeamCheck = false,
+        UseTeamColor = true,
+        ExcludedTeams = {}
+    },
+    Player = {
+        SpeedEnabled = false,
+        SpeedAmount = 16,
+        JumpEnabled = false,
+        JumpAmount = 50,
+        InfiniteJump = false,
+        FlyEnabled = false,
+        FlySpeed = 50,
+        Noclip = false
+    },
+    Teleport = {
+        AutoDeathReturn = false,
+        SavedDeathPos = nil
+    },
+    Fling = { 
+        Everyone = false,
+        SelectedOnly = false,
+        Aura = false,
+        AuraRange = 15,
+        ClickFling = false,
+        Power = 20000 
+    },
+    Misc = { 
+        HyperMode = false,
+        HyperDelay = 15,
+        FullBright = false,    -- NEW
+        TimeChanger = 14       -- NEW (Hora padrão tarde)
+    }
+}
+
+-- // THEME // --
+local Theme = {
+    Main = Color3.fromRGB(12, 12, 12),
+    Header = Color3.fromRGB(18, 18, 18),
+    Tab = Color3.fromRGB(12, 12, 12),
+    Page = Color3.fromRGB(14, 14, 14),
+    Stroke = Color3.fromRGB(255, 255, 255),
+    Text = Color3.fromRGB(240, 240, 240),
+    Accent = Color3.fromRGB(255, 255, 255),
+    OptionBG = Color3.fromRGB(22, 22, 22),
+    ButtonOff = Color3.fromRGB(45, 45, 45),
+    ButtonOn = Color3.fromRGB(255, 255, 255)
+}
+
+-- // SOUND SYSTEM // --
+local SoundLibrary = {
+    Click = "rbxassetid://4590657391", 
+    Hover = "rbxassetid://6895079853", 
+    ToggleOn = "rbxassetid://3563914545", 
+    ToggleOff = "rbxassetid://3563914545", 
+    Open = "rbxassetid://2456485350",
+    Bye = "rbxassetid://5569424683" 
+}
+
+local function PlaySFX(Name, Pitch, Volume)
+    local ID = SoundLibrary[Name]
+    if not ID then return end
+    local Sound = Instance.new("Sound")
+    Sound.SoundId = ID
+    Sound.Volume = Volume or 1
+    Sound.PlaybackSpeed = Pitch or 1
+    Sound.Parent = Services.SoundService
+    Sound.PlayOnRemove = true
+    Sound:Destroy()
+end
+
+-- // TRANSLATION // --
+local Translations = {
+    ["🇺🇸 English"] = {
+        Tab_Combat = "⚔️ Combat",
+        Tab_Visuals = "👁️ Visuals",
+        Tab_Player = "👤 Player",
+        Tab_Teleport = "🚀 Teleport",
+        Tab_Fling = "🌪️ Fling",
+        Tab_Misc = "⚡ Misc",
+        Tab_Settings = "⚙️ Settings",
+        
+        Greeting = "Hello, ",
+        
+        AimEnabled = "Aim Lock",
+        AimMethodLabel = "Aim Method",
+        Method_Hold = "Hold",
+        Method_Toggle = "Toggle (Fixed)",
+        DrawFOV = "Draw FOV",
+        FOVRadius = "Radius",
+        Smoothing = "Smoothness",
+        Prediction = "Prediction",
+        CyclePart = "Part: ",
+        AimKey = "Bind",
+        StickyAim = "Sticky Aim",
+        SmartSwitch = "Smart Switch",
+        WallCheck = "Wall Check",
+        TeamCheck = "Team Check",
+        ManageIgnored = "Ignored List",
+        IgnoredPlayers = "Players",
+        IgnoredTeams = "Teams",
+        IgnorePrefix = "Ignore ",
+        
+        TpOnAim = "TP on Aim Lock",
+        TpPosLabel = "TP Position",
+        TpPos_Behind = "Behind",
+        TpPos_Front = "Front",
+        TpPos_Above = "Above (Head)",
+        TpPos_Below = "Below",
+
+        BoxESP = "Box",
+        NameESP = "Name",
+        HealthESP = "Health",
+        SimpleTeamCheck = "Team Check",
+        UseTeamColors = "Team Colors",
+        TeamManagerTitle = "Teams", 
+        NoTeams = "None",
+        ShowPrefix = "Show ",
+        RefreshTeams = "Refresh",
+        
+        SpeedHack = "Speed",
+        WalkSpeed = "Amount",
+        Flight = "Fly",
+        FlySpeed = "Fly Speed",
+        JumpPower = "Jump",
+        JumpAmount = "Height",
+        InfiniteJump = "Inf Jump",
+        Noclip = "Noclip",
+        
+        AutoDeath = "Auto TP (Death)",
+        TeleportDeath = "TP to Death",
+        SelectPlayer = "Select Player", 
+        RefreshPlayers = "Refresh",
+        TeleportPlayer = "Teleport",
+        
+        -- Fling Tab
+        FlingPower = "Fling Power",
+        FlingEveryone = "Fling Everyone",
+        FlingSelected = "Fling Selected",
+        FlingAura = "Fling Aura",
+        AuraRange = "Aura Range",
+        ClickFling = "Click Fling (Ctrl+Click)",
+        ManageTargets = "Select Targets",
+        AddToFling = "Add/Remove Selected",
+
+        -- Misc Tab
+        HyperMode = "Hyper Mode",
+        SpectateTitle = "Spectate Player (Click to Toggle)",
+        -- StopSpectate = "Stop Spectating", -- REMOVED
+        FPSBoost = "🔥 FPS Boost (Low GFX)",
+        FPSBoostDesc = "Makes game look bad for max FPS",
+        FullBright = "☀️ Full Bright",
+        TimeChanger = "⏰ Time Changer",
+        
+        MenuBind = "Menu Key",
+        AutoSave = "Auto Save",
+        LangSelect = "Language"
+    },
+    ["🇧🇷 Portuguese"] = {
+        Tab_Combat = "⚔️ Combate",
+        Tab_Visuals = "👁️ Visual",
+        Tab_Player = "👤 Player",
+        Tab_Teleport = "🚀 Teleporte",
+        Tab_Fling = "🌪️ Fling",
+        Tab_Misc = "⚡ Outros",
+        Tab_Settings = "⚙️ Configs",
+        
+        Greeting = "Olá, ",
+        
+        AimEnabled = "Aim Lock",
+        AimMethodLabel = "Método do Aim",
+        Method_Hold = "Segurar (Hold)",
+        Method_Toggle = "Fixo (Toggle)",
+        DrawFOV = "Draw FOV",
+        FOVRadius = "Raio",
+        Smoothing = "Suavidade",
+        Prediction = "Prediction",
+        CyclePart = "Parte: ",
+        AimKey = "Tecla",
+        StickyAim = "Sticky Aim",
+        SmartSwitch = "Troca Rápida",
+        WallCheck = "Wall Check",
+        TeamCheck = "Team Check",
+        ManageIgnored = "Ignorados",
+        IgnoredPlayers = "Jogadores",
+        IgnoredTeams = "Times",
+        IgnorePrefix = "Ignorar ",
+        
+        TpOnAim = "TP ao Focar",
+        TpPosLabel = "Posição do TP",
+        TpPos_Behind = "Atrás (Costas)",
+        TpPos_Front = "Frente",
+        TpPos_Above = "Em Cima (Cabeça)",
+        TpPos_Below = "Em Baixo",
+
+        BoxESP = "Box",
+        NameESP = "Nome",
+        HealthESP = "Vida",
+        SimpleTeamCheck = "Team Check",
+        UseTeamColors = "Cores do Time",
+        TeamManagerTitle = "Times", 
+        NoTeams = "Nenhum",
+        ShowPrefix = "Mostrar ",
+        RefreshTeams = "Atualizar",
+        
+        SpeedHack = "Velocidade",
+        WalkSpeed = "Valor",
+        Flight = "Fly",
+        FlySpeed = "Velocidade",
+        JumpPower = "Pulo",
+        JumpAmount = "Altura",
+        InfiniteJump = "Pulo Infinito",
+        Noclip = "Noclip",
+        
+        AutoDeath = "Auto TP (Morte)",
+        TeleportDeath = "Ir Onde Morreu",
+        SelectPlayer = "Selecionar Jogador",
+        RefreshPlayers = "Atualizar",
+        TeleportPlayer = "Teleportar",
+        
+        -- Fling Tab
+        FlingPower = "Força do Fling",
+        FlingEveryone = "Fling em Todos",
+        FlingSelected = "Fling Selecionados",
+        FlingAura = "Fling Aura (Perto)",
+        AuraRange = "Distância Aura",
+        ClickFling = "Click Fling (Ctrl+Click)",
+        ManageTargets = "Selecionar Alvos",
+        AddToFling = "Add/Remover Alvo",
+
+        -- Misc Tab
+        HyperMode = "Hyper Mode",
+        SpectateTitle = "Espectar (Clique para Alternar)",
+        -- StopSpectate = "Parar de Espectar", -- REMOVED
+        FPSBoost = "🔥 FPS Boost (Aumentar FPS)",
+        FPSBoostDesc = "Deixa o jogo feio pra rodar liso",
+        FullBright = "☀️ Full Bright (Luz Total)",
+        TimeChanger = "⏰ Time Changer (Hora)",
+        
+        MenuBind = "Tecla Menu",
+        AutoSave = "Salvar Auto",
+        LangSelect = "Idioma"
+    }
+}
+
+local function FixLanguageString()
+    if Settings.UI.Language == "English" then Settings.UI.Language = "🇺🇸 English" end
+    if Settings.UI.Language == "Portuguese" then Settings.UI.Language = "🇧🇷 Portuguese" end
+end
+
+local function T(Key)
+    local Lang = Settings.UI.Language or "🇺🇸 English"
+    if not Translations[Lang] then Lang = "🇺🇸 English" end
+    return Translations[Lang][Key] or Key
+end
+
+local function LoadConfig()
+    if not Settings.UI.AutoSave then return end 
+    if isfile and isfile(FileName) then
+        pcall(function()
+            local decoded = Services.HttpService:JSONDecode(readfile(FileName))
+            for k, v in pairs(decoded) do
+                if Settings[k] then
+                    for k2, v2 in pairs(v) do
+                        if k2 ~= "SavedDeathPos" and k2 ~= "Theme" and Settings[k][k2] ~= nil then
+                            Settings[k][k2] = v2
+                        end
+                    end
+                end
+            end
+        end)
+    end
+    if Settings.Combat.Smoothing < 1 then Settings.Combat.Smoothing = 1 end
+    FixLanguageString() 
+end
+
+local function SaveConfig()
+    if not Settings.UI.AutoSave then return end
+    if writefile then
+        pcall(function()
+            local ToSave = Services.HttpService:JSONDecode(Services.HttpService:JSONEncode(Settings))
+            ToSave.Teleport.SavedDeathPos = nil 
+            local json = Services.HttpService:JSONEncode(ToSave)
+            writefile(FileName, json)
+        end)
+    end
+end
+
+LoadConfig()
+
+local ESPContainer = Instance.new("Folder")
+ESPContainer.Name = "SalvatoreESP"
+ESPContainer.Parent = Services.CoreGui
+
+-- // SUPER INTELLIGENT CLEANUP // --
+local function SmartCleanup()
+    getgenv().SalvatoreRunning = false
+    getgenv().SalvatoreInstance = false
+    
+    -- Unbind Loops
+    pcall(function() Services.RunService:UnbindFromRenderStep("SalvatoreAimLock") end)
+    pcall(function() Services.RunService:UnbindFromRenderStep("SalvatoreSpectateLoop") end)
+    
+    -- Reset Camera
+    if Services.Workspace.CurrentCamera then
+        Services.Workspace.CurrentCamera.CameraSubject = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
+    end
+
+    -- Reset Character
+    local Char = LocalPlayer.Character
+    if Char then
+        local Hum = Char:FindFirstChild("Humanoid")
+        local Root = Char:FindFirstChild("HumanoidRootPart")
+        if Hum then 
+            Hum.WalkSpeed = 16
+            Hum.JumpPower = 50
+            Hum.UseJumpPower = true 
+        end
+        if Root then 
+            if Root:FindFirstChild("SalvatoreFly") then Root.SalvatoreFly:Destroy() end
+            if Root:FindFirstChild("SalvatoreFlingRot") then Root.SalvatoreFlingRot:Destroy() end
+            if Root:FindFirstChild("SalvatoreFlingVelo") then Root.SalvatoreFlingVelo:Destroy() end
+            Root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            Root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        end
+        for _, part in pairs(Char:GetDescendants()) do
+            if part:IsA("BasePart") then part.CanCollide = true end
+        end
+    end
+
+    -- Destroy UI
+    local Core = Services.CoreGui
+    if Core:FindFirstChild("SalvatoreHub") then Core.SalvatoreHub:Destroy() end
+    local PGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if PGui and PGui:FindFirstChild("SalvatoreHub") then PGui.SalvatoreHub:Destroy() end
+
+    -- Destroy ESP
+    if ESPContainer then ESPContainer:Destroy() end
+    
+    for _, v in pairs(Services.Players:GetPlayers()) do
+        if v.Character and v.Character:FindFirstChild("SalvatoreHighlight") then
+            v.Character.SalvatoreHighlight:Destroy()
+        end
+    end
+    
+    -- Remove Drawings
+    if FOVCircle then FOVCircle:Remove() end
+    if AuraCircle then AuraCircle:Remove() end
+
+    -- Revert Lighting (Basic Revert)
+    Services.Lighting.GlobalShadows = true
+    Services.Lighting.Brightness = 2
+
+    -- Clear Globals
+    getgenv().SalvatoreLastPos = nil
+    getgenv().SalvatoreTrackingPos = nil 
+    getgenv().SalvatoreDeathPos = nil        
+    getgenv().SalvatoreAimToggled = nil
+    getgenv().SalvatoreFlingTargets = nil
+    getgenv().SalvatoreSpectating = nil
+end
+
+-- // UI LIBRARY // --
+local Library = {}
+local UI = {}
+local MainFrameInstance = nil
+local BorderGradientInstance = nil
+local ThemeObjects = {
+    Frames = {}, Buttons = {}, Labels = {}, Strokes = {}, Toggles = {}, Sliders = {}, Dropdowns = {}, 
+    PlayerButtons = {}, -- For Teleport
+    FlingButtons = {},  -- For Fling
+    SpectateButtons = {} -- For Spectate
+}
+
+-- ANIMATION HELPER --
+function Library:AddButtonAnim(Button)
+    Button.MouseEnter:Connect(function()
+        PlaySFX("Hover", 1.2, 0.5)
+        Services.TweenService:Create(Button, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {BackgroundTransparency = 0.2}):Play()
+    end)
+    Button.MouseLeave:Connect(function()
+        Services.TweenService:Create(Button, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {BackgroundTransparency = 0}):Play()
+    end)
+    Button.MouseButton1Down:Connect(function()
+        PlaySFX("Click", 1, 1)
+        Services.TweenService:Create(Button, TweenInfo.new(0.1, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Size = UDim2.new(Button.Size.X.Scale, Button.Size.X.Offset - 4, Button.Size.Y.Scale, Button.Size.Y.Offset - 2)}):Play()
+    end)
+    Button.MouseButton1Up:Connect(function()
+        Services.TweenService:Create(Button, TweenInfo.new(0.1, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Size = UDim2.new(Button.Size.X.Scale, Button.Size.X.Offset + 4, Button.Size.Y.Scale, Button.Size.Y.Offset + 2)}):Play()
+    end)
+end
+
+function Library:ApplyTheme()
+    if MainFrameInstance then
+        if UI.ContentFrame then UI.ContentFrame.BackgroundColor3 = Theme.Main end
+        if UI.Header then UI.Header.BackgroundColor3 = Theme.Header end
+        if UI.HeaderFix then UI.HeaderFix.BackgroundColor3 = Theme.Header end
+        if UI.TabContainer then UI.TabContainer.BackgroundColor3 = Theme.Tab end
+        if UI.PageContainer then UI.PageContainer.BackgroundColor3 = Theme.Page end
+        
+        -- Title Gradient
+        if UI.Title then 
+            UI.Title.TextColor3 = Color3.new(1, 1, 1)
+            local TitleGradient = UI.Title:FindFirstChild("TitleGradient")
+            if not TitleGradient then
+                TitleGradient = Instance.new("UIGradient")
+                TitleGradient.Name = "TitleGradient"
+                TitleGradient.Parent = UI.Title
+                
+                spawn(function()
+                    local t = 0
+                    while getgenv().SalvatoreRunning do
+                        t = t + 0.003
+                        local offset = math.sin(t) * 0.5
+                        if TitleGradient then TitleGradient.Offset = Vector2.new(offset, 0) end
+                        Services.RunService.RenderStepped:Wait()
+                    end
+                end)
+            end
+            
+            TitleGradient.Color = ColorSequence.new{
+                ColorSequenceKeypoint.new(0.00, Color3.fromRGB(139, 0, 0)),
+                ColorSequenceKeypoint.new(0.33, Color3.fromRGB(255, 255, 255)),
+                ColorSequenceKeypoint.new(0.66, Color3.fromRGB(128, 128, 128)),
+                ColorSequenceKeypoint.new(1.00, Color3.fromRGB(0, 0, 0))
+            }
+        end
+        
+        for _, frame in pairs(ThemeObjects.Frames) do
+            if frame.Name ~= "PlayerListContainer" and frame.Name ~= "FlingListContainer" and frame.Name ~= "SpectateListContainer" then
+                frame.BackgroundColor3 = Theme.OptionBG
+            end
+        end
+
+        for _, btn in pairs(UI.TabContainer:GetChildren()) do
+            if btn:IsA("TextButton") then
+                if btn.BackgroundColor3 ~= Color3.fromRGB(255, 255, 255) then 
+                      btn.BackgroundColor3 = Theme.Header
+                      btn.TextColor3 = Color3.fromRGB(150, 150, 150)
+                end
+            end
+        end
+        
+        for _, toggleData in pairs(ThemeObjects.Toggles) do
+            local btn = toggleData.Button
+            local state = toggleData.GetState()
+            btn.BackgroundColor3 = state and Theme.ButtonOn or Theme.ButtonOff
+            toggleData.Frame.BackgroundColor3 = Theme.OptionBG
+            toggleData.Label.TextColor3 = Theme.Text
+        end
+
+        for _, sliderData in pairs(ThemeObjects.Sliders) do
+            sliderData.Frame.BackgroundColor3 = Theme.OptionBG
+            sliderData.Label.TextColor3 = Theme.Text
+            sliderData.Bg.BackgroundColor3 = Theme.ButtonOff
+            sliderData.Fill.BackgroundColor3 = Theme.ButtonOn
+        end
+        
+        for _, btn in pairs(ThemeObjects.Buttons) do
+             if btn.Name ~= "PlayerButton" and btn.Name ~= "FlingButton" and btn.Name ~= "SpectateButton" then 
+                btn.BackgroundColor3 = Theme.ButtonOff
+                btn.TextColor3 = Theme.Text
+             end
+        end
+
+        for _, pBtnData in pairs(ThemeObjects.PlayerButtons) do
+            if pBtnData.Object and pBtnData.Object.Parent then
+                local isSelected = (SelectedTpTarget == pBtnData.Name)
+                pBtnData.Object.BackgroundColor3 = isSelected and Theme.ButtonOn or Theme.OptionBG
+                pBtnData.NameLabel.TextColor3 = isSelected and Theme.Main or Theme.Text
+            end
+        end
+        
+        for _, fBtnData in pairs(ThemeObjects.FlingButtons) do
+            if fBtnData.Object and fBtnData.Object.Parent then
+                local isSelected = getgenv().SalvatoreFlingTargets[fBtnData.Name]
+                fBtnData.Object.BackgroundColor3 = isSelected and Theme.ButtonOn or Theme.OptionBG
+                fBtnData.NameLabel.TextColor3 = isSelected and Theme.Main or Theme.Text
+            end
+        end
+
+        for _, sBtnData in pairs(ThemeObjects.SpectateButtons) do
+            if sBtnData.Object and sBtnData.Object.Parent then
+                local isSelected = (getgenv().SalvatoreSpectating == sBtnData.Name)
+                sBtnData.Object.BackgroundColor3 = isSelected and Theme.ButtonOn or Theme.OptionBG
+                sBtnData.NameLabel.TextColor3 = isSelected and Theme.Main or Theme.Text
+            end
+        end
+        
+        for _, dd in pairs(ThemeObjects.Dropdowns) do
+            dd.Label.TextColor3 = Theme.Text
+            dd.Status.TextColor3 = Theme.Accent
+        end
+        
+        if GradientInstance then GradientInstance:Destroy(); GradientInstance = nil end
+    end
+end
+
+function Library:CreateUI()
+    local Parent = pcall(function() return Services.CoreGui end) and Services.CoreGui or LocalPlayer.PlayerGui
+    if Parent:FindFirstChild("SalvatoreHub") then Parent.SalvatoreHub:Destroy() end
+
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "SalvatoreHub"
+    ScreenGui.Parent = Parent
+    ScreenGui.ResetOnSpawn = false
+    ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+    local MainFrame = Instance.new("Frame")
+    MainFrame.Name = "BorderContainer"
+    MainFrame.Parent = ScreenGui
+    MainFrame.BackgroundColor3 = Color3.fromRGB(255, 255, 255) 
+    MainFrame.BorderSizePixel = 0
+    MainFrame.Size = UDim2.new(0, 650, 0, 550) 
+    MainFrame.Position = Settings.UI.Position
+    
+    local MainCorner = Instance.new("UICorner")
+    MainCorner.CornerRadius = UDim.new(0, 12) 
+    MainCorner.Parent = MainFrame
+
+    BorderGradientInstance = Instance.new("UIGradient")
+    BorderGradientInstance.Name = "BorderGradient"
+    BorderGradientInstance.Parent = MainFrame
+    BorderGradientInstance.Color = ColorSequence.new{
+        ColorSequenceKeypoint.new(0.00, Color3.fromRGB(0, 0, 139)),   
+        ColorSequenceKeypoint.new(0.33, Color3.fromRGB(137, 207, 240)),
+        ColorSequenceKeypoint.new(0.66, Color3.fromRGB(255, 255, 0)),   
+        ColorSequenceKeypoint.new(1.00, Color3.fromRGB(255, 105, 180))  
+    }
+    
+    spawn(function()
+        local rotation = 0
+        while getgenv().SalvatoreRunning do
+            if not MainFrame.Parent then break end 
+            rotation = rotation + 0.05 
+            if BorderGradientInstance then BorderGradientInstance.Rotation = rotation % 360 end
+            Services.RunService.RenderStepped:Wait()
+        end
+    end)
+
+    local ContentFrame = Instance.new("Frame")
+    ContentFrame.Name = "ContentFrame"
+    ContentFrame.Parent = MainFrame
+    ContentFrame.BackgroundColor3 = Theme.Main
+    ContentFrame.BorderSizePixel = 0
+    ContentFrame.Size = UDim2.new(1, -6, 1, -6) 
+    ContentFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+    ContentFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+    ContentFrame.ClipsDescendants = true
+
+    local ContentCorner = Instance.new("UICorner")
+    ContentCorner.CornerRadius = UDim.new(0, 10)
+    ContentCorner.Parent = ContentFrame
+
+    local Header = Instance.new("Frame")
+    Header.Parent = ContentFrame
+    Header.BackgroundColor3 = Theme.Header
+    Header.Size = UDim2.new(1, 0, 0, 55) 
+    Header.BorderSizePixel = 0
+    
+    local HeaderCorner = Instance.new("UICorner")
+    HeaderCorner.CornerRadius = UDim.new(0, 10)
+    HeaderCorner.Parent = Header
+    
+    local HeaderFix = Instance.new("Frame")
+    HeaderFix.Parent = Header
+    HeaderFix.BackgroundColor3 = Theme.Header
+    HeaderFix.BorderSizePixel = 0
+    HeaderFix.Size = UDim2.new(1, 0, 0, 15)
+    HeaderFix.Position = UDim2.new(0, 0, 1, -15)
+
+    local GreetingContainer = Instance.new("Frame")
+    GreetingContainer.Parent = Header
+    GreetingContainer.BackgroundTransparency = 1
+    GreetingContainer.Position = UDim2.new(0, 10, 0.5, 0)
+    GreetingContainer.AnchorPoint = Vector2.new(0, 0.5) 
+    GreetingContainer.Size = UDim2.new(0.4, 0, 0.8, 0) 
+    
+    local GLayout = Instance.new("UIListLayout")
+    GLayout.Parent = GreetingContainer
+    GLayout.FillDirection = Enum.FillDirection.Horizontal
+    GLayout.VerticalAlignment = Enum.VerticalAlignment.Center 
+    GLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    GLayout.Padding = UDim.new(0, 8) 
+
+    local AvatarImage = Instance.new("ImageLabel")
+    AvatarImage.Parent = GreetingContainer
+    AvatarImage.Size = UDim2.new(0, 34, 0, 34) 
+    AvatarImage.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    AvatarImage.BackgroundTransparency = 0
+    AvatarImage.LayoutOrder = 1
+    
+    local AvCorner = Instance.new("UICorner")
+    AvCorner.CornerRadius = UDim.new(1, 0) 
+    AvCorner.Parent = AvatarImage
+    
+    local AvStroke = Instance.new("UIStroke") 
+    AvStroke.Parent = AvatarImage
+    AvStroke.Color = Color3.fromRGB(100, 100, 100)
+    AvStroke.Thickness = 1.5
+    
+    task.spawn(function()
+        local content = Services.Players:GetUserThumbnailAsync(LocalPlayer.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size48x48)
+        AvatarImage.Image = content
+    end)
+
+    local TextContainer = Instance.new("Frame")
+    TextContainer.Parent = GreetingContainer
+    TextContainer.BackgroundTransparency = 1
+    TextContainer.Size = UDim2.new(0, 0, 1, 0) 
+    TextContainer.AutomaticSize = Enum.AutomaticSize.X
+    TextContainer.LayoutOrder = 2
+    
+    local TLayout = Instance.new("UIListLayout")
+    TLayout.Parent = TextContainer
+    TLayout.FillDirection = Enum.FillDirection.Horizontal
+    TLayout.VerticalAlignment = Enum.VerticalAlignment.Center 
+    TLayout.Padding = UDim.new(0, 2)
+
+    local HelloLabel = Instance.new("TextLabel")
+    HelloLabel.Parent = TextContainer
+    HelloLabel.BackgroundTransparency = 1
+    HelloLabel.Text = T("Greeting")
+    HelloLabel.Font = Enum.Font.GothamBold 
+    HelloLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+    HelloLabel.TextSize = 18 
+    HelloLabel.TextYAlignment = Enum.TextYAlignment.Center 
+    HelloLabel.Size = UDim2.new(0, 0, 1, 0) 
+    HelloLabel.AutomaticSize = Enum.AutomaticSize.X
+
+    local NameLabel = Instance.new("TextLabel")
+    NameLabel.Parent = TextContainer
+    NameLabel.BackgroundTransparency = 1
+    NameLabel.Text = LocalPlayer.DisplayName
+    NameLabel.Font = Enum.Font.GothamBold 
+    NameLabel.TextSize = 18 
+    NameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    NameLabel.TextYAlignment = Enum.TextYAlignment.Center 
+    NameLabel.Size = UDim2.new(0, 0, 1, 0) 
+    NameLabel.AutomaticSize = Enum.AutomaticSize.X
+    
+    local WaveLabel = Instance.new("TextLabel")
+    WaveLabel.Parent = TextContainer
+    WaveLabel.BackgroundTransparency = 1
+    WaveLabel.Text = " 👋"
+    WaveLabel.Font = Enum.Font.GothamBold 
+    WaveLabel.TextSize = 18 
+    WaveLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    WaveLabel.TextYAlignment = Enum.TextYAlignment.Center 
+    WaveLabel.Size = UDim2.new(0, 0, 1, 0) 
+    WaveLabel.AutomaticSize = Enum.AutomaticSize.X
+
+    local NameGradient = Instance.new("UIGradient")
+    NameGradient.Parent = NameLabel
+    NameGradient.Color = ColorSequence.new{
+        ColorSequenceKeypoint.new(0.00, Color3.fromRGB(137, 207, 240)),
+        ColorSequenceKeypoint.new(0.50, Color3.fromRGB(255, 192, 203)),
+        ColorSequenceKeypoint.new(1.00, Color3.fromRGB(137, 207, 240))
+    }
+    
+    spawn(function()
+        local rot = 0
+        while getgenv().SalvatoreRunning do
+            if not NameLabel.Parent then break end 
+            rot = rot + 0.2 
+            if NameGradient then 
+                NameGradient.Rotation = rot % 360 
+            end
+            Services.RunService.RenderStepped:Wait()
+        end
+    end)
+
+    local Title = Instance.new("TextLabel")
+    Title.Parent = Header
+    Title.BackgroundTransparency = 1
+    Title.Size = UDim2.new(0, 200, 1, 0)
+    Title.Position = UDim2.new(0.5, 0, 0.5, 0)
+    Title.AnchorPoint = Vector2.new(0.5, 0.5) 
+    Title.Font = Enum.Font.GothamBold
+    Title.Text = "Salvatore Hub"
+    Title.TextColor3 = Theme.Text
+    Title.TextSize = 22 
+    Title.TextXAlignment = Enum.TextXAlignment.Center
+
+    local CloseButton = Instance.new("TextButton")
+    CloseButton.Parent = Header
+    CloseButton.BackgroundTransparency = 1
+    CloseButton.Size = UDim2.new(0, 55, 1, 0)
+    CloseButton.Position = UDim2.new(1, 0, 0.5, 0) 
+    CloseButton.AnchorPoint = Vector2.new(1, 0.5)
+    CloseButton.Font = Enum.Font.GothamBold 
+    CloseButton.Text = "❌" 
+    CloseButton.TextColor3 = Color3.fromRGB(255, 50, 50) 
+    CloseButton.TextSize = 18
+    
+    CloseButton.MouseEnter:Connect(function()
+        Services.TweenService:Create(CloseButton, TweenInfo.new(0.2), {TextSize = 24, TextColor3 = Color3.fromRGB(255, 0, 0)}):Play()
+    end)
+    CloseButton.MouseLeave:Connect(function()
+        Services.TweenService:Create(CloseButton, TweenInfo.new(0.2), {TextSize = 18, TextColor3 = Color3.fromRGB(255, 50, 50)}):Play()
+    end)
+    
+    CloseButton.MouseButton1Click:Connect(function() 
+        PlaySFX("Bye", 1, 1)
+        SmartCleanup()
+    end)
+    
+    local Dragging, DragInput, DragStart, StartPos
+    Header.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            Dragging = true; DragStart = input.Position; StartPos = MainFrame.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    Dragging = false; Settings.UI.Position = MainFrame.Position; SaveConfig()
+                end
+            end)
+        end
+    end)
+    
+    Header.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement then DragInput = input end
+    end)
+    
+    Services.UserInputService.InputChanged:Connect(function(input)
+        if input == DragInput and Dragging then
+            local delta = input.Position - DragStart
+            MainFrame.Position = UDim2.new(StartPos.X.Scale, StartPos.X.Offset + delta.X, StartPos.Y.Scale, StartPos.Y.Offset + delta.Y)
+        end
+    end)
+
+    local TabContainer = Instance.new("Frame")
+    TabContainer.Parent = ContentFrame
+    TabContainer.BackgroundColor3 = Theme.Tab
+    TabContainer.Size = UDim2.new(0, 130, 1, -60) 
+    TabContainer.Position = UDim2.new(0, 5, 0, 60)
+    TabContainer.BorderSizePixel = 0
+
+    local PageContainer = Instance.new("Frame")
+    PageContainer.Parent = ContentFrame
+    PageContainer.BackgroundColor3 = Theme.Page
+    PageContainer.Size = UDim2.new(1, -145, 1, -70)
+    PageContainer.Position = UDim2.new(0, 140, 0, 65)
+    PageContainer.BorderSizePixel = 0
+    
+    local PageCorner = Instance.new("UICorner")
+    PageCorner.CornerRadius = UDim.new(0, 8)
+    PageCorner.Parent = PageContainer
+
+    local UIStrokePage = Instance.new("UIStroke")
+    UIStrokePage.Parent = PageContainer
+    UIStrokePage.Color = Color3.fromRGB(40, 40, 40)
+    UIStrokePage.Thickness = 1
+
+    UI.MainFrame = MainFrame 
+    UI.ContentFrame = ContentFrame 
+    UI.ScreenGui = ScreenGui
+    UI.TabContainer = TabContainer
+    UI.PageContainer = PageContainer
+    UI.Header = Header
+    UI.HeaderFix = HeaderFix
+    UI.Title = Title
+    UI.Tabs = {}
+    
+    return UI
+end
+
+function Library:CreateTab(Name)
+    local TabButton = Instance.new("TextButton")
+    TabButton.Name = Name
+    TabButton.Parent = UI.TabContainer
+    TabButton.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+    TabButton.Size = UDim2.new(1, -10, 0, 36) 
+    TabButton.Position = UDim2.new(0, 5, 0, (#UI.Tabs * 40)) 
+    TabButton.Font = Enum.Font.GothamSemibold
+    TabButton.Text = Name
+    TabButton.TextColor3 = Color3.fromRGB(150, 150, 150)
+    TabButton.TextSize = 14 
+    TabButton.AutoButtonColor = false
+    
+    local TabCorner = Instance.new("UICorner")
+    TabCorner.CornerRadius = UDim.new(0, 6)
+    TabCorner.Parent = TabButton
+
+    local Page = Instance.new("ScrollingFrame")
+    Page.Name = Name .. "Page"
+    Page.Parent = UI.PageContainer
+    Page.BackgroundTransparency = 1
+    Page.Size = UDim2.new(1, -12, 1, -12)
+    Page.Position = UDim2.new(0, 6, 0, 6)
+    Page.ScrollBarThickness = 0
+    Page.ScrollBarImageColor3 = Color3.fromRGB(255, 255, 255)
+    Page.Visible = false
+    Page.AutomaticCanvasSize = Enum.AutomaticSize.Y 
+
+    local ListLayout = Instance.new("UIListLayout")
+    ListLayout.Parent = Page
+    ListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    ListLayout.Padding = UDim.new(0, 6)
+
+    TabButton.MouseButton1Click:Connect(function()
+        PlaySFX("Click", 1, 1)
+        for _, btn in pairs(UI.TabContainer:GetChildren()) do
+            if btn:IsA("TextButton") then
+                Services.TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = Theme.Header, TextColor3 = Color3.fromRGB(150, 150, 150)}):Play()
+            end
+        end
+        for _, pg in pairs(UI.PageContainer:GetChildren()) do
+            if pg:IsA("ScrollingFrame") then pg.Visible = false end
+        end
+
+        Services.TweenService:Create(TabButton, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(255, 255, 255), TextColor3 = Color3.fromRGB(10, 10, 10)}):Play()
+        Page.Visible = true
+        
+        Page.CanvasGroupTransparency = 1 
+        if Page:IsA("CanvasGroup") then
+             Services.TweenService:Create(Page, TweenInfo.new(0.3), {CanvasGroupTransparency = 0}):Play()
+        end
+    end)
+    
+    TabButton.MouseEnter:Connect(function()
+        PlaySFX("Hover", 1, 0.3)
+        if TabButton.TextColor3 ~= Color3.fromRGB(10, 10, 10) then 
+             Services.TweenService:Create(TabButton, TweenInfo.new(0.2), {BackgroundTransparency = 0.2}):Play()
+        end
+    end)
+    TabButton.MouseLeave:Connect(function()
+         if TabButton.TextColor3 ~= Color3.fromRGB(10, 10, 10) then
+             Services.TweenService:Create(TabButton, TweenInfo.new(0.2), {BackgroundTransparency = 0}):Play()
+         end
+    end)
+
+    table.insert(UI.Tabs, TabButton)
+    if #UI.Tabs == 1 then
+        TabButton.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        TabButton.TextColor3 = Color3.fromRGB(10, 10, 10)
+        Page.Visible = true
+    end
+    return Page
+end
+
+function Library:CreateDropdown(Page, Title, Options, CurrentValue, Callback)
+    local Wrapper = Instance.new("Frame")
+    Wrapper.Parent = Page
+    Wrapper.BackgroundColor3 = Theme.OptionBG
+    Wrapper.Size = UDim2.new(1, 0, 0, 42) 
+    Wrapper.ClipsDescendants = true 
+    table.insert(ThemeObjects.Frames, Wrapper)
+
+    local Corner = Instance.new("UICorner")
+    Corner.CornerRadius = UDim.new(0, 6)
+    Corner.Parent = Wrapper
+
+    local HeaderBtn = Instance.new("TextButton")
+    HeaderBtn.Parent = Wrapper
+    HeaderBtn.BackgroundTransparency = 1
+    HeaderBtn.Size = UDim2.new(1, 0, 0, 42)
+    HeaderBtn.Text = ""
+    
+    local Label = Instance.new("TextLabel")
+    Label.Parent = HeaderBtn
+    Label.BackgroundTransparency = 1
+    Label.Position = UDim2.new(0, 12, 0, 0)
+    Label.Size = UDim2.new(0.5, 0, 1, 0)
+    Label.Font = Enum.Font.GothamSemibold
+    Label.TextColor3 = Theme.Text
+    Label.TextXAlignment = Enum.TextXAlignment.Left
+    Label.TextSize = 14
+    Label.Text = Title
+
+    local Status = Instance.new("TextLabel")
+    Status.Parent = HeaderBtn
+    Status.BackgroundTransparency = 1
+    Status.Position = UDim2.new(0.5, 0, 0, 0)
+    Status.Size = UDim2.new(0.5, -12, 1, 0)
+    Status.Font = Enum.Font.GothamBold
+    Status.TextColor3 = Theme.Accent
+    Status.TextXAlignment = Enum.TextXAlignment.Right
+    Status.TextSize = 13
+    Status.Text = CurrentValue
+    
+    table.insert(ThemeObjects.Dropdowns, {Label = Label, Status = Status})
+    
+    local OptionContainer = Instance.new("Frame")
+    OptionContainer.Parent = Wrapper
+    OptionContainer.BackgroundTransparency = 1
+    OptionContainer.Position = UDim2.new(0, 0, 0, 42)
+    OptionContainer.Size = UDim2.new(1, 0, 0, 0)
+    
+    local UIList = Instance.new("UIListLayout")
+    UIList.Parent = OptionContainer
+    UIList.SortOrder = Enum.SortOrder.LayoutOrder
+    UIList.Padding = UDim.new(0, 2)
+    
+    local Open = false
+    local OptionHeight = 32
+    
+    local function UpdateSize()
+        local Count = 0
+        for _,v in pairs(OptionContainer:GetChildren()) do
+            if v:IsA("TextButton") then Count = Count + 1 end
+        end
+        local TotalHeight = 42 + (Count * (OptionHeight + 2)) + 6
+        if Open then
+            Services.TweenService:Create(Wrapper, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 0, TotalHeight)}):Play()
+        else
+            Services.TweenService:Create(Wrapper, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 0, 42)}):Play()
+        end
+    end
+
+    HeaderBtn.MouseButton1Click:Connect(function()
+        PlaySFX("Click", 1, 1)
+        Open = not Open
+        UpdateSize()
+    end)
+
+    local DropdownInterface = {}
+
+    function DropdownInterface:Refresh(NewOptions)
+        for _, v in pairs(OptionContainer:GetChildren()) do
+            if v:IsA("TextButton") then v:Destroy() end
+        end
+        
+        for _, Option in pairs(NewOptions) do
+            local OptBtn = Instance.new("TextButton")
+            OptBtn.Parent = OptionContainer
+            OptBtn.BackgroundColor3 = Theme.ButtonOff
+            OptBtn.Size = UDim2.new(1, -12, 0, OptionHeight)
+            OptBtn.Position = UDim2.new(0, 6, 0, 0)
+            OptBtn.Font = Enum.Font.Gotham
+            OptBtn.Text = Option
+            OptBtn.TextColor3 = Theme.Text
+            OptBtn.TextSize = 13
+            table.insert(ThemeObjects.Buttons, OptBtn)
+            
+            local OptCorner = Instance.new("UICorner")
+            OptCorner.CornerRadius = UDim.new(0, 6)
+            OptCorner.Parent = OptBtn
+
+            OptBtn.MouseButton1Click:Connect(function()
+                PlaySFX("Click", 1.1, 1)
+                Open = false
+                Services.TweenService:Create(Wrapper, TweenInfo.new(0.3), {Size = UDim2.new(1, 0, 0, 42)}):Play()
+                CurrentValue = Option
+                Status.Text = Option
+                if Callback then Callback(Option) end
+            end)
+            
+            Library:AddButtonAnim(OptBtn)
+        end
+        if Open then UpdateSize() end
+    end
+
+    DropdownInterface:Refresh(Options)
+    return DropdownInterface
+end
+
+function Library:CreateToggle(Page, Text, ConfigKey, ConfigSubKey, Callback, DefaultState)
+    local Frame = Instance.new("Frame")
+    Frame.Parent = Page
+    Frame.BackgroundColor3 = Theme.OptionBG
+    Frame.Size = UDim2.new(1, 0, 0, 42) 
+    table.insert(ThemeObjects.Frames, Frame)
+    
+    local Corner = Instance.new("UICorner")
+    Corner.CornerRadius = UDim.new(0, 6)
+    Corner.Parent = Frame
+    
+    local Label = Instance.new("TextLabel")
+    Label.Parent = Frame
+    Label.BackgroundTransparency = 1
+    Label.Size = UDim2.new(0.7, 0, 1, 0)
+    Label.Position = UDim2.new(0, 12, 0, 0)
+    Label.Font = Enum.Font.GothamSemibold
+    Label.Text = Text
+    Label.TextColor3 = Theme.Text
+    Label.TextSize = 14
+    Label.TextXAlignment = Enum.TextXAlignment.Left
+    
+    local Button = Instance.new("TextButton")
+    Button.Parent = Frame
+    
+    local function GetVal()
+        if ConfigKey and ConfigSubKey then return Settings[ConfigKey][ConfigSubKey] end
+        if DefaultState ~= nil then return DefaultState end 
+        return false
+    end
+    
+    Button.BackgroundColor3 = GetVal() and Theme.ButtonOn or Theme.ButtonOff
+    Button.Size = UDim2.new(0, 24, 0, 24) 
+    Button.Position = UDim2.new(1, -36, 0.5, -12)
+    Button.Text = ""
+    
+    local BtnCorner = Instance.new("UICorner")
+    BtnCorner.CornerRadius = UDim.new(0, 6)
+    BtnCorner.Parent = Button
+    
+    table.insert(ThemeObjects.Toggles, { Button = Button, Frame = Frame, Label = Label, GetState = GetVal })
+    
+    Button.MouseButton1Click:Connect(function()
+        local NewState = false
+        
+        if ConfigKey and ConfigSubKey then
+            Settings[ConfigKey][ConfigSubKey] = not Settings[ConfigKey][ConfigSubKey]
+            NewState = Settings[ConfigKey][ConfigSubKey]
+            SaveConfig()
+            if Callback then Callback(NewState) end
+        else
+            if Callback then 
+                NewState = Callback() 
+                if type(NewState) ~= "boolean" then NewState = false end 
+            end
+        end
+        
+        local targetColor = NewState and Theme.ButtonOn or Theme.ButtonOff
+        if NewState then PlaySFX("ToggleOn", 1, 1) else PlaySFX("ToggleOff", 0.9, 1) end
+        
+        Services.TweenService:Create(Button, TweenInfo.new(0.2), {BackgroundColor3 = targetColor}):Play()
+        Services.TweenService:Create(Button, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(0, 20, 0, 20)}):Play()
+        task.wait(0.1)
+        Services.TweenService:Create(Button, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(0, 24, 0, 24)}):Play()
+    end)
+    
+    Button.MouseEnter:Connect(function() PlaySFX("Hover", 1.5, 0.3) end)
+    
+    return Button, Label 
+end
+
+function Library:CreateSlider(Page, Text, ConfigKey, ConfigSubKey, Min, Max, Callback)
+    local Frame = Instance.new("Frame")
+    Frame.Parent = Page
+    Frame.BackgroundColor3 = Theme.OptionBG
+    Frame.Size = UDim2.new(1, 0, 0, 56) 
+    table.insert(ThemeObjects.Frames, Frame)
+    
+    local Corner = Instance.new("UICorner")
+    Corner.CornerRadius = UDim.new(0, 6)
+    Corner.Parent = Frame
+    
+    local Label = Instance.new("TextLabel")
+    Label.Parent = Frame
+    Label.BackgroundTransparency = 1
+    Label.Size = UDim2.new(1, -24, 0, 24)
+    Label.Position = UDim2.new(0, 12, 0, 4)
+    Label.Font = Enum.Font.GothamSemibold
+    local val = Settings[ConfigKey][ConfigSubKey]
+    if ConfigSubKey == "Prediction" then val = string.format("%.3f", val) end
+    Label.Text = Text .. ": " .. tostring(val)
+    Label.TextColor3 = Theme.Text
+    Label.TextSize = 14
+    Label.TextXAlignment = Enum.TextXAlignment.Left
+    
+    local SliderBG = Instance.new("TextButton")
+    SliderBG.Parent = Frame
+    SliderBG.BackgroundColor3 = Theme.ButtonOff
+    SliderBG.Size = UDim2.new(1, -24, 0, 6)
+    SliderBG.Position = UDim2.new(0, 12, 0, 38)
+    SliderBG.Text = ""
+    SliderBG.AutoButtonColor = false
+    
+    local SliderCorner = Instance.new("UICorner")
+    SliderCorner.CornerRadius = UDim.new(1, 0)
+    SliderCorner.Parent = SliderBG
+    
+    local Fill = Instance.new("Frame")
+    Fill.Parent = SliderBG
+    Fill.BackgroundColor3 = Theme.ButtonOn
+    Fill.Size = UDim2.new(0, 0, 1, 0)
+    
+    local FillCorner = Instance.new("UICorner")
+    FillCorner.CornerRadius = UDim.new(1, 0)
+    FillCorner.Parent = Fill
+
+    table.insert(ThemeObjects.Sliders, { Frame = Frame, Label = Label, Bg = SliderBG, Fill = Fill })
+
+    local initialPercent = (Settings[ConfigKey][ConfigSubKey] - Min) / (Max - Min)
+    Fill.Size = UDim2.new(initialPercent, 0, 1, 0)
+
+    local Dragging = false
+    local function Update(input)
+        local pos = UDim2.new(math.clamp((input.Position.X - SliderBG.AbsolutePosition.X) / SliderBG.AbsoluteSize.X, 0, 1), 0, 1, 0)
+        Fill.Size = pos
+        local val = (Min + ((Max - Min) * pos.X.Scale))
+        
+        if ConfigSubKey == "Prediction" then
+            -- keep decimal
+        else
+            val = math.floor(val + 0.5) 
+        end
+        
+        Settings[ConfigKey][ConfigSubKey] = val
+        if ConfigSubKey == "Prediction" then
+             Label.Text = Text .. ": " .. string.format("%.3f", val)
+        else
+             Label.Text = Text .. ": " .. tostring(val)
+        end
+        if Callback then Callback(val) end
+    end
+    
+    SliderBG.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            Dragging = true; Update(input)
+        end
+    end)
+    
+    Services.UserInputService.InputChanged:Connect(function(input)
+        if Dragging and input.UserInputType == Enum.UserInputType.MouseMovement then Update(input) end
+    end)
+    
+    Services.UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            Dragging = false; SaveConfig()
+        end
+    end)
+    
+    SliderBG.MouseEnter:Connect(function() PlaySFX("Hover", 2, 0.2) end)
+end
+
+function Library:CreateButton(Page, Text, Callback)
+    local Button = Instance.new("TextButton")
+    Button.Parent = Page
+    Button.BackgroundColor3 = Theme.ButtonOff
+    Button.Size = UDim2.new(1, 0, 0, 40)
+    Button.Font = Enum.Font.GothamSemibold
+    Button.Text = Text
+    Button.TextColor3 = Theme.Text
+    Button.TextSize = 14
+    table.insert(ThemeObjects.Buttons, Button)
+    
+    local Corner = Instance.new("UICorner")
+    Corner.CornerRadius = UDim.new(0, 6)
+    Corner.Parent = Button
+    
+    Library:AddButtonAnim(Button) 
+    
+    Button.MouseButton1Click:Connect(function()
+        if Callback then Callback() end
+    end)
+end
+
+function Library:CreateKeybind(Page, Text, ConfigKey, ConfigSubKey, ConfigTypeKey)
+    local Frame = Instance.new("Frame")
+    Frame.Parent = Page
+    Frame.BackgroundColor3 = Theme.OptionBG
+    Frame.Size = UDim2.new(1, 0, 0, 42)
+    table.insert(ThemeObjects.Frames, Frame)
+    
+    local Corner = Instance.new("UICorner")
+    Corner.CornerRadius = UDim.new(0, 6)
+    Corner.Parent = Frame
+    
+    local Label = Instance.new("TextLabel")
+    Label.Parent = Frame
+    Label.BackgroundTransparency = 1
+    Label.Size = UDim2.new(0.7, 0, 1, 0)
+    Label.Position = UDim2.new(0, 12, 0, 0)
+    Label.Font = Enum.Font.GothamSemibold
+    Label.Text = Text
+    Label.TextColor3 = Theme.Text
+    Label.TextSize = 14
+    Label.TextXAlignment = Enum.TextXAlignment.Left
+    
+    local Button = Instance.new("TextButton")
+    Button.Parent = Frame
+    Button.BackgroundColor3 = Theme.ButtonOff
+    Button.Size = UDim2.new(0, 90, 0, 24)
+    Button.Position = UDim2.new(1, -100, 0.5, -12)
+    Button.Font = Enum.Font.GothamBold
+    Button.TextColor3 = Color3.fromRGB(200, 200, 200)
+    Button.TextSize = 12
+    table.insert(ThemeObjects.Buttons, Button)
+    
+    local BtnCorner = Instance.new("UICorner")
+    BtnCorner.CornerRadius = UDim.new(0, 6)
+    BtnCorner.Parent = Button
+    
+    local function UpdateText()
+        Button.Text = "[" .. tostring(Settings[ConfigKey][ConfigSubKey]) .. "]"
+    end
+    UpdateText()
+    
+    local Listening = false
+    
+    Button.MouseButton1Click:Connect(function()
+        PlaySFX("Click", 1, 1)
+        if Listening then return end
+        Listening = true
+        Button.Text = "..."
+        local connection
+        connection = Services.UserInputService.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.Keyboard then
+                if input.KeyCode ~= Enum.KeyCode.Unknown then
+                    Settings[ConfigKey][ConfigSubKey] = input.KeyCode.Name
+                    if ConfigTypeKey then Settings[ConfigKey][ConfigTypeKey] = "Keyboard" end
+                    UpdateText(); SaveConfig(); Listening = false; connection:Disconnect()
+                end
+            elseif input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.MouseButton2 or input.UserInputType == Enum.UserInputType.MouseButton3 then
+                 Settings[ConfigKey][ConfigSubKey] = input.UserInputType.Name
+                 if ConfigTypeKey then Settings[ConfigKey][ConfigTypeKey] = "Mouse" end
+                 UpdateText(); SaveConfig(); Listening = false; connection:Disconnect()
+            end
+        end)
+    end)
+    
+    Button.MouseEnter:Connect(function() PlaySFX("Hover", 1.2, 0.3) end)
+end
+
+function Library:Init()
+    local UIStruct = self:CreateUI()
+    MainFrameInstance = UIStruct.MainFrame
+    
+    -- // COMBAT // --
+    local CombatPage = self:CreateTab(T("Tab_Combat"))
+    self:CreateToggle(CombatPage, T("AimEnabled"), "Combat", "Enabled")
+    self:CreateToggle(CombatPage, T("DrawFOV"), "Combat", "ShowFOV")
+    
+    local AimMethods = {T("Method_Hold"), T("Method_Toggle")}
+    local InitialMethod = Settings.Combat.AimMethod == "Toggle" and T("Method_Toggle") or T("Method_Hold")
+    self:CreateDropdown(CombatPage, T("AimMethodLabel"), AimMethods, InitialMethod, function(val)
+        if val == T("Method_Toggle") then Settings.Combat.AimMethod = "Toggle" else Settings.Combat.AimMethod = "Hold" end
+        getgenv().SalvatoreAimToggled = false 
+        SaveConfig()
+    end)
+
+    self:CreateToggle(CombatPage, T("TpOnAim"), "Combat", "TpOnAim")
+    local TpPosOptions = {T("TpPos_Behind"), T("TpPos_Front"), T("TpPos_Above"), T("TpPos_Below")}
+    self:CreateDropdown(CombatPage, T("TpPosLabel"), TpPosOptions, Settings.Combat.TpPosition, function(val)
+        Settings.Combat.TpPosition = val
+        SaveConfig()
+    end)
+
+    self:CreateSlider(CombatPage, T("FOVRadius"), "Combat", "FOVRadius", 10, 500)
+    self:CreateSlider(CombatPage, T("Smoothing"), "Combat", "Smoothing", 1, 10) 
+    self:CreateSlider(CombatPage, T("Prediction"), "Combat", "Prediction", 0, 0.5)
+    
+    self:CreateButton(CombatPage, T("CyclePart") .. Settings.Combat.AimPart, function()
+        local parts = {"Head", "Torso", "Random"}
+        local current = table.find(parts, Settings.Combat.AimPart) or 1
+        local nextPart = parts[current + 1] or parts[1]
+        Settings.Combat.AimPart = nextPart
+        for _, v in pairs(CombatPage:GetChildren()) do
+            if v:IsA("TextButton") and v.Text:find(T("CyclePart")) then
+                v.Text = T("CyclePart") .. nextPart
+            end
+        end
+        SaveConfig()
+    end)
+    
+    self:CreateKeybind(CombatPage, T("AimKey"), "Combat", "TriggerKey", "TriggerType")
+    self:CreateToggle(CombatPage, T("StickyAim"), "Combat", "StickyAim")
+    self:CreateToggle(CombatPage, T("SmartSwitch"), "Combat", "SmartSwitch")
+    self:CreateToggle(CombatPage, T("WallCheck"), "Combat", "WallCheck")
+    self:CreateToggle(CombatPage, T("TeamCheck"), "Combat", "TeamCheck")
+    
+    self:CreateButton(CombatPage, T("ManageIgnored"), function()
+        local HolderName = "IgnoreListFrame"
+        local Existing = CombatPage:FindFirstChild(HolderName)
+        if Existing then
+            Existing.Visible = not Existing.Visible
+        else
+            local Frame = Instance.new("Frame")
+            Frame.Name = HolderName
+            Frame.Parent = CombatPage
+            Frame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+            Frame.Size = UDim2.new(1, 0, 0, 0)
+            Frame.AutomaticSize = Enum.AutomaticSize.Y
+            Frame.BorderSizePixel = 0
+            
+            local Layout = Instance.new("UIListLayout"); Layout.Parent = Frame; Layout.SortOrder = Enum.SortOrder.LayoutOrder; Layout.Padding = UDim.new(0, 5)
+            local Pad = Instance.new("UIPadding"); Pad.Parent = Frame; Pad.PaddingTop = UDim.new(0, 10); Pad.PaddingBottom = UDim.new(0, 10)
+            
+            local function SectionLbl(txt)
+                local L = Instance.new("TextLabel"); L.Parent = Frame; L.BackgroundTransparency = 1; L.Size = UDim2.new(1,0,0,26); L.Font=Enum.Font.GothamBold; L.Text=txt; L.TextColor3=Color3.fromRGB(100,100,100); L.TextSize=12
+            end
+            
+            SectionLbl(T("IgnoredPlayers"))
+            for _, v in pairs(Services.Players:GetPlayers()) do
+                if v ~= LocalPlayer then
+                    if Settings.Combat.ExcludedPlayers[v.Name] == nil then Settings.Combat.ExcludedPlayers[v.Name] = false end
+                    self:CreateToggle(Frame, T("IgnorePrefix") .. v.Name, nil, nil, function()
+                        Settings.Combat.ExcludedPlayers[v.Name] = not Settings.Combat.ExcludedPlayers[v.Name]
+                        SaveConfig()
+                        return Settings.Combat.ExcludedPlayers[v.Name]
+                    end, Settings.Combat.ExcludedPlayers[v.Name]) 
+                end
+            end
+            
+            SectionLbl(T("IgnoredTeams"))
+            for _, t in pairs(Services.Teams:GetTeams()) do
+                 if Settings.Combat.ExcludedTeams[t.Name] == nil then Settings.Combat.ExcludedTeams[t.Name] = false end
+                 self:CreateToggle(Frame, T("IgnorePrefix") .. t.Name, nil, nil, function()
+                        Settings.Combat.ExcludedTeams[t.Name] = not Settings.Combat.ExcludedTeams[t.Name]
+                        SaveConfig()
+                        return Settings.Combat.ExcludedTeams[t.Name]
+                 end, Settings.Combat.ExcludedTeams[t.Name]) 
+            end
+        end
+    end)
+
+    -- // VISUALS // --
+    local VisualsPage = self:CreateTab(T("Tab_Visuals"))
+    self:CreateToggle(VisualsPage, T("BoxESP"), "Visuals", "BoxESP")
+    self:CreateToggle(VisualsPage, T("NameESP"), "Visuals", "NameESP")
+    self:CreateToggle(VisualsPage, T("HealthESP"), "Visuals", "HealthESP")
+    self:CreateToggle(VisualsPage, T("SimpleTeamCheck"), "Visuals", "TeamCheck")
+    self:CreateToggle(VisualsPage, T("UseTeamColors"), "Visuals", "UseTeamColor") 
+    
+    local Wrapper = Instance.new("Frame")
+    Wrapper.Parent = VisualsPage
+    Wrapper.BackgroundColor3 = Theme.OptionBG
+    Wrapper.Size = UDim2.new(1, 0, 0, 42)
+    Wrapper.ClipsDescendants = true
+    table.insert(ThemeObjects.Frames, Wrapper)
+    local WCorner = Instance.new("UICorner"); WCorner.CornerRadius = UDim.new(0, 6); WCorner.Parent = Wrapper
+    
+    local HeaderBtn = Instance.new("TextButton")
+    HeaderBtn.Parent = Wrapper
+    HeaderBtn.BackgroundTransparency = 1
+    HeaderBtn.Size = UDim2.new(1, 0, 0, 42)
+    HeaderBtn.Text = ""
+    
+    local Label = Instance.new("TextLabel")
+    Label.Parent = HeaderBtn
+    Label.BackgroundTransparency = 1
+    Label.Position = UDim2.new(0, 12, 0, 0)
+    Label.Size = UDim2.new(0.5, 0, 1, 0)
+    Label.Font = Enum.Font.GothamSemibold
+    Label.TextColor3 = Theme.Text
+    Label.TextXAlignment = Enum.TextXAlignment.Left
+    Label.TextSize = 14
+    Label.Text = T("TeamManagerTitle") 
+    table.insert(ThemeObjects.Labels, Label) 
+
+    local Status = Instance.new("TextLabel")
+    Status.Parent = HeaderBtn
+    Status.BackgroundTransparency = 1
+    Status.Position = UDim2.new(0.5, 0, 0, 0)
+    Status.Size = UDim2.new(0.5, -12, 1, 0)
+    Status.Font = Enum.Font.GothamBold
+    Status.TextColor3 = Theme.Accent
+    Status.TextXAlignment = Enum.TextXAlignment.Right
+    Status.TextSize = 13
+    Status.Text = "v"
+    
+    local TeamsContainer = Instance.new("Frame")
+    TeamsContainer.Parent = Wrapper
+    TeamsContainer.BackgroundTransparency = 1
+    TeamsContainer.Position = UDim2.new(0, 0, 0, 42)
+    TeamsContainer.Size = UDim2.new(1, 0, 0, 0)
+    
+    local TList = Instance.new("UIListLayout")
+    TList.Parent = TeamsContainer
+    TList.SortOrder = Enum.SortOrder.LayoutOrder
+    TList.Padding = UDim.new(0, 2)
+    
+    local Open = false
+    local OptionHeight = 32 
+
+    local function UpdateSize()
+        local Count = 0
+        for _,v in pairs(TeamsContainer:GetChildren()) do
+            if v:IsA("Frame") then Count = Count + 1 end
+        end
+        local TotalHeight = 42 + (Count * (OptionHeight + 2)) + 6
+        if Open then
+            Services.TweenService:Create(Wrapper, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 0, TotalHeight)}):Play()
+            Status.Text = "^"
+        else
+            Services.TweenService:Create(Wrapper, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 0, 42)}):Play()
+            Status.Text = "v"
+        end
+    end
+
+    HeaderBtn.MouseButton1Click:Connect(function()
+        PlaySFX("Click", 1, 1)
+        Open = not Open
+        UpdateSize()
+    end)
+    
+    local function RefreshTeamList()
+        for _, c in pairs(TeamsContainer:GetChildren()) do
+            if c:IsA("Frame") then c:Destroy() end
+        end
+        local Teams = Services.Teams:GetTeams()
+        if #Teams == 0 then
+             local EmptyFrame = Instance.new("Frame"); EmptyFrame.Parent = TeamsContainer; EmptyFrame.Size = UDim2.new(1,0,0,32); EmptyFrame.BackgroundTransparency = 1
+             local L = Instance.new("TextLabel", EmptyFrame); L.Size = UDim2.new(1,0,1,0); L.BackgroundTransparency = 1; L.TextColor3 = Color3.fromRGB(150,150,150); L.Text = T("NoTeams"); L.Font = Enum.Font.Gotham; L.TextSize=13
+        end
+
+        for _, Team in pairs(Teams) do
+            local TeamName = Team.Name
+            if Settings.Visuals.ExcludedTeams[TeamName] == nil then Settings.Visuals.ExcludedTeams[TeamName] = false end
+            local isExcluded = Settings.Visuals.ExcludedTeams[TeamName]
+            self:CreateToggle(TeamsContainer, T("ShowPrefix") .. TeamName, nil, nil, function()
+                Settings.Visuals.ExcludedTeams[TeamName] = not Settings.Visuals.ExcludedTeams[TeamName]
+                SaveConfig()
+                return not Settings.Visuals.ExcludedTeams[TeamName] 
+            end, not isExcluded) 
+        end
+        if Open then UpdateSize() end
+    end
+    
+    Services.Teams.ChildAdded:Connect(RefreshTeamList)
+    Services.Teams.ChildRemoved:Connect(RefreshTeamList)
+    RefreshTeamList()
+    
+    -- // PLAYER // --
+    local PlayerPage = self:CreateTab(T("Tab_Player"))
+    self:CreateToggle(PlayerPage, T("SpeedHack"), "Player", "SpeedEnabled")
+    self:CreateSlider(PlayerPage, T("WalkSpeed"), "Player", "SpeedAmount", 16, 200)
+    self:CreateToggle(PlayerPage, T("Flight"), "Player", "FlyEnabled")
+    self:CreateSlider(PlayerPage, T("FlySpeed"), "Player", "FlySpeed", 10, 200)
+    self:CreateToggle(PlayerPage, T("JumpPower"), "Player", "JumpEnabled")
+    self:CreateSlider(PlayerPage, T("JumpAmount"), "Player", "JumpAmount", 50, 300)
+    self:CreateToggle(PlayerPage, T("InfiniteJump"), "Player", "InfiniteJump")
+    self:CreateToggle(PlayerPage, T("Noclip"), "Player", "Noclip")
+
+    -- // TELEPORT // --
+    local TeleportPage = self:CreateTab(T("Tab_Teleport"))
+    self:CreateToggle(TeleportPage, T("AutoDeath"), "Teleport", "AutoDeathReturn")
+    self:CreateButton(TeleportPage, T("TeleportDeath"), function()
+        if getgenv().SalvatoreDeathPos and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+            LocalPlayer.Character.HumanoidRootPart.CFrame = getgenv().SalvatoreDeathPos
+        end
+    end)
+
+    local Lbl = Instance.new("TextLabel"); Lbl.Parent = TeleportPage; Lbl.BackgroundTransparency=1; Lbl.Size=UDim2.new(1,0,0,24); Lbl.Text=T("SelectPlayer"); Lbl.Font=Enum.Font.GothamBold; Lbl.TextColor3=Color3.fromRGB(100,100,100); Lbl.TextSize=12
+    
+    local PlayerListContainer = Instance.new("Frame")
+    PlayerListContainer.Name = "PlayerListContainer"
+    PlayerListContainer.Parent = TeleportPage
+    PlayerListContainer.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+    PlayerListContainer.Size = UDim2.new(1, 0, 0, 180) 
+    PlayerListContainer.ClipsDescendants = true
+    
+    local PLC_Corner = Instance.new("UICorner")
+    PLC_Corner.CornerRadius = UDim.new(0, 8)
+    PLC_Corner.Parent = PlayerListContainer
+    
+    local PlayerScroll = Instance.new("ScrollingFrame")
+    PlayerScroll.Parent = PlayerListContainer
+    PlayerScroll.BackgroundTransparency = 1
+    PlayerScroll.Size = UDim2.new(1, -8, 1, -8)
+    PlayerScroll.Position = UDim2.new(0, 4, 0, 4)
+    PlayerScroll.ScrollBarThickness = 0
+    PlayerScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    
+    local PS_Layout = Instance.new("UIListLayout")
+    PS_Layout.Parent = PlayerScroll
+    PS_Layout.SortOrder = Enum.SortOrder.LayoutOrder
+    PS_Layout.Padding = UDim.new(0, 5)
+
+    local function RefreshPlayerList()
+        for _, v in pairs(PlayerScroll:GetChildren()) do
+            if v:IsA("TextButton") then v:Destroy() end
+        end
+        ThemeObjects.PlayerButtons = {} 
+        
+        for _, p in pairs(Services.Players:GetPlayers()) do
+            if p ~= LocalPlayer then
+                local PBtn = Instance.new("TextButton")
+                PBtn.Name = "PlayerButton"
+                PBtn.Parent = PlayerScroll
+                PBtn.Size = UDim2.new(1, 0, 0, 40)
+                PBtn.BackgroundColor3 = (SelectedTpTarget == p.Name) and Theme.ButtonOn or Theme.OptionBG
+                PBtn.Text = ""
+                PBtn.AutoButtonColor = false
+                
+                local PB_Corner = Instance.new("UICorner")
+                PB_Corner.CornerRadius = UDim.new(0, 6)
+                PB_Corner.Parent = PBtn
+                
+                local Avatar = Instance.new("ImageLabel")
+                Avatar.Parent = PBtn
+                Avatar.BackgroundColor3 = Color3.fromRGB(0,0,0)
+                Avatar.BackgroundTransparency = 0.5
+                Avatar.Size = UDim2.new(0, 32, 0, 32)
+                Avatar.Position = UDim2.new(0, 4, 0, 4)
+                local AvCorner = Instance.new("UICorner"); AvCorner.CornerRadius = UDim.new(1, 0); AvCorner.Parent = Avatar
+                
+                task.spawn(function()
+                    local content = Services.Players:GetUserThumbnailAsync(p.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size48x48)
+                    Avatar.Image = content
+                end)
+                
+                local DispName = Instance.new("TextLabel")
+                DispName.Parent = PBtn
+                DispName.BackgroundTransparency = 1
+                DispName.Position = UDim2.new(0, 45, 0, 0)
+                DispName.Size = UDim2.new(1, -50, 1, 0)
+                DispName.Font = Enum.Font.GothamBold
+                DispName.Text = p.DisplayName
+                DispName.TextColor3 = (SelectedTpTarget == p.Name) and Theme.Main or Theme.Text
+                DispName.TextXAlignment = Enum.TextXAlignment.Left
+                DispName.TextSize = 14
+                
+                table.insert(ThemeObjects.PlayerButtons, {
+                    Name = p.Name, Object = PBtn, NameLabel = DispName, UserLabel = Instance.new("TextLabel") 
+                })
+
+                PBtn.MouseButton1Click:Connect(function()
+                    PlaySFX("Click", 1, 1)
+                    SelectedTpTarget = p.Name
+                    for _, btnData in pairs(ThemeObjects.PlayerButtons) do
+                        if btnData.Object and btnData.Object.Parent then
+                            local isTarget = (btnData.Name == SelectedTpTarget)
+                            btnData.Object.BackgroundColor3 = isTarget and Theme.ButtonOn or Theme.OptionBG
+                            btnData.NameLabel.TextColor3 = isTarget and Theme.Main or Theme.Text
+                        end
+                    end
+                end)
+                
+                Library:AddButtonAnim(PBtn)
+            end
+        end
+    end
+    
+    self:CreateButton(TeleportPage, T("RefreshPlayers"), RefreshPlayerList)
+    
+    self:CreateButton(TeleportPage, T("TeleportPlayer"), function()
+        if SelectedTpTarget then
+            local Target = Services.Players:FindFirstChild(SelectedTpTarget)
+            if Target and Target.Character and Target.Character:FindFirstChild("HumanoidRootPart") and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                LocalPlayer.Character.HumanoidRootPart.CFrame = Target.Character.HumanoidRootPart.CFrame
+            end
+        end
+    end)
+    
+    RefreshPlayerList()
+    
+    -- // FLING TAB // --
+    local FlingPage = self:CreateTab(T("Tab_Fling"))
+    
+    self:CreateSlider(FlingPage, T("FlingPower"), "Fling", "Power", 10000, 1000000)
+    
+    self:CreateToggle(FlingPage, T("FlingEveryone"), "Fling", "Everyone", function(state)
+        Settings.Fling.Everyone = state
+        if state then Settings.Fling.SelectedOnly = false end
+    end)
+
+    self:CreateToggle(FlingPage, T("FlingSelected"), "Fling", "SelectedOnly", function(state)
+        Settings.Fling.SelectedOnly = state
+        if state then Settings.Fling.Everyone = false end
+    end)
+    
+    self:CreateToggle(FlingPage, T("FlingAura"), "Fling", "Aura")
+    self:CreateSlider(FlingPage, T("AuraRange"), "Fling", "AuraRange", 10, 50)
+    self:CreateToggle(FlingPage, T("ClickFling"), "Fling", "ClickFling")
+    
+    -- Fling Avatar List UI
+    local FlingLbl = Instance.new("TextLabel"); FlingLbl.Parent = FlingPage; FlingLbl.BackgroundTransparency=1; FlingLbl.Size=UDim2.new(1,0,0,24); FlingLbl.Text=T("ManageTargets"); FlingLbl.Font=Enum.Font.GothamBold; FlingLbl.TextColor3=Color3.fromRGB(100,100,100); FlingLbl.TextSize=12
+
+    local FlingListContainer = Instance.new("Frame")
+    FlingListContainer.Name = "FlingListContainer"
+    FlingListContainer.Parent = FlingPage
+    FlingListContainer.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+    FlingListContainer.Size = UDim2.new(1, 0, 0, 150) 
+    FlingListContainer.ClipsDescendants = true
+    
+    local FLC_Corner = Instance.new("UICorner")
+    FLC_Corner.CornerRadius = UDim.new(0, 8)
+    FLC_Corner.Parent = FlingListContainer
+    
+    local FlingScroll = Instance.new("ScrollingFrame")
+    FlingScroll.Parent = FlingListContainer
+    FlingScroll.BackgroundTransparency = 1
+    FlingScroll.Size = UDim2.new(1, -8, 1, -8)
+    FlingScroll.Position = UDim2.new(0, 4, 0, 4)
+    FlingScroll.ScrollBarThickness = 0
+    FlingScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    
+    local FS_Layout = Instance.new("UIListLayout")
+    FS_Layout.Parent = FlingScroll
+    FS_Layout.SortOrder = Enum.SortOrder.LayoutOrder
+    FS_Layout.Padding = UDim.new(0, 5)
+
+    local function RefreshFlingList()
+        for _, v in pairs(FlingScroll:GetChildren()) do
+            if v:IsA("TextButton") then v:Destroy() end
+        end
+        ThemeObjects.FlingButtons = {} 
+        
+        for _, p in pairs(Services.Players:GetPlayers()) do
+            if p ~= LocalPlayer then
+                local FBtn = Instance.new("TextButton")
+                FBtn.Name = "FlingButton"
+                FBtn.Parent = FlingScroll
+                FBtn.Size = UDim2.new(1, 0, 0, 40)
+                -- Check if user is already in target table
+                local isTarget = getgenv().SalvatoreFlingTargets[p.Name]
+                FBtn.BackgroundColor3 = isTarget and Theme.ButtonOn or Theme.OptionBG
+                FBtn.Text = ""
+                FBtn.AutoButtonColor = false
+                
+                local FB_Corner = Instance.new("UICorner")
+                FB_Corner.CornerRadius = UDim.new(0, 6)
+                FB_Corner.Parent = FBtn
+                
+                local Avatar = Instance.new("ImageLabel")
+                Avatar.Parent = FBtn
+                Avatar.BackgroundColor3 = Color3.fromRGB(0,0,0)
+                Avatar.BackgroundTransparency = 0.5
+                Avatar.Size = UDim2.new(0, 32, 0, 32)
+                Avatar.Position = UDim2.new(0, 4, 0, 4)
+                local AvCorner = Instance.new("UICorner"); AvCorner.CornerRadius = UDim.new(1, 0); AvCorner.Parent = Avatar
+                
+                task.spawn(function()
+                    local content = Services.Players:GetUserThumbnailAsync(p.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size48x48)
+                    Avatar.Image = content
+                end)
+                
+                local DispName = Instance.new("TextLabel")
+                DispName.Parent = FBtn
+                DispName.BackgroundTransparency = 1
+                DispName.Position = UDim2.new(0, 45, 0, 0)
+                DispName.Size = UDim2.new(1, -50, 1, 0)
+                DispName.Font = Enum.Font.GothamBold
+                DispName.Text = p.DisplayName
+                DispName.TextColor3 = isTarget and Theme.Main or Theme.Text
+                DispName.TextXAlignment = Enum.TextXAlignment.Left
+                DispName.TextSize = 14
+                
+                table.insert(ThemeObjects.FlingButtons, {
+                    Name = p.Name, Object = FBtn, NameLabel = DispName 
+                })
+
+                FBtn.MouseButton1Click:Connect(function()
+                    if getgenv().SalvatoreFlingTargets[p.Name] then
+                        getgenv().SalvatoreFlingTargets[p.Name] = nil -- Remove
+                        PlaySFX("ToggleOff", 0.8, 1)
+                    else
+                        getgenv().SalvatoreFlingTargets[p.Name] = true -- Add
+                        PlaySFX("ToggleOn", 1.5, 1)
+                    end
+                    
+                    -- Visual Update
+                    local newTargetState = getgenv().SalvatoreFlingTargets[p.Name]
+                    FBtn.BackgroundColor3 = newTargetState and Theme.ButtonOn or Theme.OptionBG
+                    DispName.TextColor3 = newTargetState and Theme.Main or Theme.Text
+                    
+                    Services.TweenService:Create(FBtn, TweenInfo.new(0.1), {Size = UDim2.new(1, -5, 0, 38)}):Play()
+                    task.wait(0.1)
+                    Services.TweenService:Create(FBtn, TweenInfo.new(0.1), {Size = UDim2.new(1, 0, 0, 40)}):Play()
+                end)
+                
+                Library:AddButtonAnim(FBtn)
+            end
+        end
+    end
+    
+    RefreshFlingList()
+    
+    -- // MISC (HYPER MODE / SPECTATE / FPS BOOST / FULL BRIGHT / TIME) // --
+    local MiscPage = self:CreateTab(T("Tab_Misc"))
+    
+    -- FULL BRIGHT AND TIME
+    self:CreateToggle(MiscPage, T("FullBright"), "Misc", "FullBright")
+    self:CreateSlider(MiscPage, T("TimeChanger"), "Misc", "TimeChanger", 0, 24, function(val)
+        Settings.Misc.TimeChanger = val
+        Services.Lighting.ClockTime = val
+    end)
+
+    -- FPS BOOST
+    self:CreateButton(MiscPage, T("FPSBoost"), function()
+        -- FPS Boost Logic
+        local Terrain = Services.Workspace.Terrain
+        Terrain.WaterWaveSize = 0
+        Terrain.WaterWaveSpeed = 0
+        Terrain.WaterReflectance = 0
+        Terrain.WaterTransparency = 0
+        Services.Lighting.GlobalShadows = false
+        Services.Lighting.FogEnd = 9e9
+        settings().Rendering.QualityLevel = 1
+        
+        for _, v in pairs(Services.Workspace:GetDescendants()) do
+            if v:IsA("BasePart") and not v:IsA("MeshPart") then
+                v.Material = Enum.Material.Plastic
+                v.Reflectance = 0
+            elseif v:IsA("Decal") or v:IsA("Texture") then
+                v:Destroy()
+            elseif v:IsA("ParticleEmitter") or v:IsA("Trail") then
+                v.Enabled = false
+            end
+        end
+        PlaySFX("ToggleOn", 1, 1)
+    end)
+    
+    local _, HyperLabel = self:CreateToggle(MiscPage, T("HyperMode"), "Misc", "HyperMode", function(state)
+        Settings.Misc.HyperMode = state
+    end)
+    
+    if HyperLabel then
+        local HGradient = Instance.new("UIGradient")
+        HGradient.Parent = HyperLabel
+        spawn(function()
+             local t = 0
+             while getgenv().SalvatoreRunning do
+                 t = t + 0.0005 
+                 local color1 = Color3.fromHSV(t % 1, 1, 1)
+                 local color2 = Color3.fromHSV((t + 0.5) % 1, 1, 1)
+                 HGradient.Color = ColorSequence.new{
+                     ColorSequenceKeypoint.new(0, color1),
+                     ColorSequenceKeypoint.new(1, color2)
+                 }
+                 Services.RunService.RenderStepped:Wait()
+             end
+        end)
+    end
+
+    -- SPECTATE UI
+    local SpecLbl = Instance.new("TextLabel"); SpecLbl.Parent = MiscPage; SpecLbl.BackgroundTransparency=1; SpecLbl.Size=UDim2.new(1,0,0,24); SpecLbl.Text=T("SpectateTitle"); SpecLbl.Font=Enum.Font.GothamBold; SpecLbl.TextColor3=Color3.fromRGB(100,100,100); SpecLbl.TextSize=12
+    
+    -- Removed the Stop Spectate Button as requested
+
+    local SpectateListContainer = Instance.new("Frame")
+    SpectateListContainer.Name = "SpectateListContainer"
+    SpectateListContainer.Parent = MiscPage
+    SpectateListContainer.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+    SpectateListContainer.Size = UDim2.new(1, 0, 0, 150) 
+    SpectateListContainer.ClipsDescendants = true
+    
+    local SLC_Corner = Instance.new("UICorner")
+    SLC_Corner.CornerRadius = UDim.new(0, 8)
+    SLC_Corner.Parent = SpectateListContainer
+    
+    local SpectateScroll = Instance.new("ScrollingFrame")
+    SpectateScroll.Parent = SpectateListContainer
+    SpectateScroll.BackgroundTransparency = 1
+    SpectateScroll.Size = UDim2.new(1, -8, 1, -8)
+    SpectateScroll.Position = UDim2.new(0, 4, 0, 4)
+    SpectateScroll.ScrollBarThickness = 0
+    SpectateScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    
+    local SS_Layout = Instance.new("UIListLayout")
+    SS_Layout.Parent = SpectateScroll
+    SS_Layout.SortOrder = Enum.SortOrder.LayoutOrder
+    SS_Layout.Padding = UDim.new(0, 5)
+
+    local function RefreshSpectateList()
+        for _, v in pairs(SpectateScroll:GetChildren()) do
+            if v:IsA("TextButton") then v:Destroy() end
+        end
+        ThemeObjects.SpectateButtons = {} 
+        
+        for _, p in pairs(Services.Players:GetPlayers()) do
+            if p ~= LocalPlayer then
+                local SBtn = Instance.new("TextButton")
+                SBtn.Name = "SpectateButton"
+                SBtn.Parent = SpectateScroll
+                SBtn.Size = UDim2.new(1, 0, 0, 40)
+                
+                local isSpec = (getgenv().SalvatoreSpectating == p.Name)
+                SBtn.BackgroundColor3 = isSpec and Theme.ButtonOn or Theme.OptionBG
+                SBtn.Text = ""
+                SBtn.AutoButtonColor = false
+                
+                local SB_Corner = Instance.new("UICorner")
+                SB_Corner.CornerRadius = UDim.new(0, 6)
+                SB_Corner.Parent = SBtn
+                
+                local Avatar = Instance.new("ImageLabel")
+                Avatar.Parent = SBtn
+                Avatar.BackgroundColor3 = Color3.fromRGB(0,0,0)
+                Avatar.BackgroundTransparency = 0.5
+                Avatar.Size = UDim2.new(0, 32, 0, 32)
+                Avatar.Position = UDim2.new(0, 4, 0, 4)
+                local AvCorner = Instance.new("UICorner"); AvCorner.CornerRadius = UDim.new(1, 0); AvCorner.Parent = Avatar
+                
+                task.spawn(function()
+                    local content = Services.Players:GetUserThumbnailAsync(p.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size48x48)
+                    Avatar.Image = content
+                end)
+                
+                local DispName = Instance.new("TextLabel")
+                DispName.Parent = SBtn
+                DispName.BackgroundTransparency = 1
+                DispName.Position = UDim2.new(0, 45, 0, 0)
+                DispName.Size = UDim2.new(1, -50, 1, 0)
+                DispName.Font = Enum.Font.GothamBold
+                DispName.Text = p.DisplayName
+                DispName.TextColor3 = isSpec and Theme.Main or Theme.Text
+                DispName.TextXAlignment = Enum.TextXAlignment.Left
+                DispName.TextSize = 14
+                
+                table.insert(ThemeObjects.SpectateButtons, {
+                    Name = p.Name, Object = SBtn, NameLabel = DispName 
+                })
+
+                SBtn.MouseButton1Click:Connect(function()
+                    PlaySFX("Click", 1, 1)
+                    if getgenv().SalvatoreSpectating == p.Name then
+                        -- Turn Off
+                        getgenv().SalvatoreSpectating = nil
+                        if LocalPlayer.Character then Camera.CameraSubject = LocalPlayer.Character.Humanoid end
+                    else
+                        -- Turn On
+                        getgenv().SalvatoreSpectating = p.Name
+                    end
+                    
+                    -- Update Colors
+                    for _, sBtnData in pairs(ThemeObjects.SpectateButtons) do
+                        local isActive = (getgenv().SalvatoreSpectating == sBtnData.Name)
+                        if sBtnData.Object then 
+                             sBtnData.Object.BackgroundColor3 = isActive and Theme.ButtonOn or Theme.OptionBG
+                             sBtnData.NameLabel.TextColor3 = isActive and Theme.Main or Theme.Text
+                        end
+                    end
+                end)
+                
+                Library:AddButtonAnim(SBtn)
+            end
+        end
+    end
+    
+    RefreshSpectateList()
+    
+    -- Listener for players leaving/joining to update lists
+    Services.Players.PlayerAdded:Connect(function() task.wait(1); RefreshPlayerList(); RefreshFlingList(); RefreshSpectateList() end)
+    Services.Players.PlayerRemoving:Connect(function() task.wait(0.1); RefreshPlayerList(); RefreshFlingList(); RefreshSpectateList() end)
+
+    -- // SETTINGS // --
+    local SettingsPage = self:CreateTab(T("Tab_Settings"))
+    self:CreateKeybind(SettingsPage, T("MenuBind"), "UI", "MenuKey", "MenuKeyType")
+    self:CreateToggle(SettingsPage, T("AutoSave"), "UI", "AutoSave")
+
+    self:CreateDropdown(SettingsPage, T("LangSelect"), {"🇺🇸 English", "🇧🇷 Portuguese"}, Settings.UI.Language, function(Value)
+        Settings.UI.Language = Value
+        SaveConfig()
+        Library:Init() 
+    end)
+
+    Library:ApplyTheme()
+    return UIStruct.MainFrame
+end
+
+-- Initialize UI
+Library:Init()
+
+-- // 4. TOGGLE ANIMATIONS // --
+local function ToggleUI()
+    if not MainFrameInstance then return end 
+    PlaySFX("Open", 1.2, 0.7) 
+    if Settings.UI.Position.Y.Scale > 1 then 
+        Settings.UI.Position = UDim2.new(0.5, -325, 0.5, -275)
+    end
+
+    if Settings.UI.Open then
+        Settings.UI.Open = false
+        Services.TweenService:Create(MainFrameInstance, TweenInfo.new(0.6, Enum.EasingStyle.Back, Enum.EasingDirection.In), {Position = UDim2.new(0.5, -325, 1.5, 0)}):Play()
+    else
+        Settings.UI.Open = true
+        MainFrameInstance.Position = UDim2.new(0.5, -325, 1.5, 0)
+        Services.TweenService:Create(MainFrameInstance, TweenInfo.new(0.6, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Position = Settings.UI.Position}):Play()
+    end
+end
+
+Services.UserInputService.InputBegan:Connect(function(input, processed)
+    if processed then return end
+    if not getgenv().SalvatoreRunning then return end
+    
+    local BindType = Settings.UI.MenuKeyType or "Keyboard"
+    local BindKey = Settings.UI.MenuKey or "K"
+    if BindType == "Keyboard" and input.UserInputType == Enum.UserInputType.Keyboard then
+        if input.KeyCode.Name == BindKey then ToggleUI() end
+    elseif BindType == "Mouse" then
+        if input.UserInputType.Name == BindKey then ToggleUI() end
+    end
+    
+    -- Click Fling Logic
+    if input.UserInputType == Enum.UserInputType.MouseButton1 and Services.UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) and Settings.Fling.ClickFling then
+        local Target = Mouse.Target
+        if Target then
+            local Model = Target:FindFirstAncestorOfClass("Model")
+            if Model then
+                local Player = Services.Players:GetPlayerFromCharacter(Model)
+                if Player and Player ~= LocalPlayer then
+                    -- One-shot Fling
+                    task.spawn(function()
+                        local Char = LocalPlayer.Character
+                        if Char and Char:FindFirstChild("HumanoidRootPart") and Model:FindFirstChild("HumanoidRootPart") then
+                             local Root = Char.HumanoidRootPart
+                             local TRoot = Model.HumanoidRootPart
+                             local Force = Settings.Fling.Power
+                             
+                             local BAV = Instance.new("BodyAngularVelocity", Root)
+                             BAV.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+                             BAV.AngularVelocity = Vector3.new(0, Force, 0)
+                             
+                             local Start = tick()
+                             while tick() - Start < 0.5 do
+                                 Root.CFrame = TRoot.CFrame
+                                 Root.AssemblyLinearVelocity = Vector3.new(0,0,0)
+                                 Services.RunService.Heartbeat:Wait()
+                             end
+                             BAV:Destroy()
+                             Root.AssemblyLinearVelocity = Vector3.new(0,0,0)
+                             Root.AssemblyAngularVelocity = Vector3.new(0,0,0)
+                        end
+                    end)
+                end
+            end
+        end
+    end
+
+    if Settings.Combat.AimMethod == "Toggle" then
+        local AimType = Settings.Combat.TriggerType
+        local AimKey = Settings.Combat.TriggerKey
+        if AimType == "Keyboard" and input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode.Name == AimKey then
+             getgenv().SalvatoreAimToggled = not getgenv().SalvatoreAimToggled
+             if getgenv().SalvatoreAimToggled then PlaySFX("ToggleOn", 1.5, 1) else PlaySFX("ToggleOff", 0.8, 1) end
+        elseif AimType == "Mouse" and input.UserInputType.Name == AimKey then
+             getgenv().SalvatoreAimToggled = not getgenv().SalvatoreAimToggled
+             if getgenv().SalvatoreAimToggled then PlaySFX("ToggleOn", 1.5, 1) else PlaySFX("ToggleOff", 0.8, 1) end
+        end
+    end
+end)
+
+Services.UserInputService.JumpRequest:Connect(function()
+    if not getgenv().SalvatoreRunning then return end
+    if Settings.Player.InfiniteJump and LocalPlayer.Character then
+        local Humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if Humanoid then Humanoid:ChangeState("Jumping") end
+    end
+end)
+
+if not Settings.UI.Open then
+    if MainFrameInstance then MainFrameInstance.Position = UDim2.new(0.5, -325, 1.5, 0) end
+else
+    if MainFrameInstance then MainFrameInstance.Position = Settings.UI.Position end
+end
+
+-- // 5. GAMEPLAY LOOPS // --
+
+-- [[ SPECTATE LOOP ]] --
+Services.RunService:BindToRenderStep("SalvatoreSpectateLoop", Enum.RenderPriority.Camera.Value, function()
+    if getgenv().SalvatoreRunning and getgenv().SalvatoreSpectating then
+        local Target = Services.Players:FindFirstChild(getgenv().SalvatoreSpectating)
+        if Target and Target.Character and Target.Character:FindFirstChild("Humanoid") then
+            Camera.CameraSubject = Target.Character.Humanoid
+        else
+            -- If target lost/dead, revert to self temporarily
+            if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+                 Camera.CameraSubject = LocalPlayer.Character.Humanoid
+            end
+        end
+    end
+end)
+
+-- [[ UNIFIED FLING LOOP ]] --
+task.spawn(function()
+    while getgenv().SalvatoreRunning do
+        local DoFling = Settings.Fling.Everyone or Settings.Fling.SelectedOnly or Settings.Fling.Aura
+        
+        if DoFling then
+            local Char = LocalPlayer.Character
+            if Char and Char:FindFirstChild("HumanoidRootPart") then
+                local Root = Char.HumanoidRootPart
+                local Power = Settings.Fling.Power
+                
+                -- Force Collision ON for Fling
+                for _, part in pairs(Char:GetDescendants()) do 
+                    if part:IsA("BasePart") then part.CanCollide = true end 
+                end
+                
+                -- Setup Rotational Velocity
+                local BAV = Root:FindFirstChild("SalvatoreFlingRot")
+                if not BAV then
+                    BAV = Instance.new("BodyAngularVelocity", Root)
+                    BAV.Name = "SalvatoreFlingRot"
+                    BAV.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+                end
+                BAV.AngularVelocity = Vector3.new(0, Power, 0)
+                
+                local BV = Root:FindFirstChild("SalvatoreFlingVelo")
+                if not BV then
+                    BV = Instance.new("BodyVelocity", Root)
+                    BV.Name = "SalvatoreFlingVelo"
+                    BV.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+                end
+                BV.Velocity = Vector3.new(0, 0, 0) -- Stability
+
+                -- ITERATE TARGETS
+                for _, Target in pairs(Services.Players:GetPlayers()) do
+                    if Target ~= LocalPlayer and Char:FindFirstChild("HumanoidRootPart") then
+                        if Target.Character and Target.Character:FindFirstChild("HumanoidRootPart") then
+                            local TRoot = Target.Character.HumanoidRootPart
+                            local ShouldFling = false
+                            
+                            -- Mode 1: Everyone
+                            if Settings.Fling.Everyone then 
+                                ShouldFling = true 
+                            end
+                            
+                            -- Mode 2: Selected Only
+                            if Settings.Fling.SelectedOnly and getgenv().SalvatoreFlingTargets[Target.Name] then
+                                ShouldFling = true
+                            end
+                            
+                            -- Mode 3: Aura
+                            if Settings.Fling.Aura then
+                                local Dist = (Root.Position - TRoot.Position).Magnitude
+                                if Dist <= Settings.Fling.AuraRange then
+                                    ShouldFling = true
+                                end
+                            end
+
+                            if ShouldFling then
+                                local StartTime = tick()
+                                -- Attack Loop (Burst)
+                                while tick() - StartTime < 0.25 and Char:FindFirstChild("HumanoidRootPart") do
+                                    Root.CFrame = TRoot.CFrame -- Inside
+                                    Root.AssemblyLinearVelocity = Vector3.new(0,0,0)
+                                    Services.RunService.Heartbeat:Wait()
+                                end
+                            end
+                        end
+                    end
+                end
+            else
+                task.wait(1) -- Dead wait
+            end
+        else
+            -- Cleanup Physics if disabled
+            local Char = LocalPlayer.Character
+            if Char and Char:FindFirstChild("HumanoidRootPart") then
+                local Root = Char.HumanoidRootPart
+                 if Root:FindFirstChild("SalvatoreFlingRot") then Root.SalvatoreFlingRot:Destroy() end
+                 if Root:FindFirstChild("SalvatoreFlingVelo") then Root.SalvatoreFlingVelo:Destroy() end
+            end
+            task.wait(0.5)
+        end
+        task.wait()
+    end
+end)
+
+-- [[ LIGHTING LOOP (FULL BRIGHT & TIME CHANGER) ]] --
+task.spawn(function()
+    while getgenv().SalvatoreRunning do
+        if Settings.Misc.FullBright then
+            Services.Lighting.Brightness = 2
+            Services.Lighting.GlobalShadows = false
+            Services.Lighting.OutdoorAmbient = Color3.fromRGB(128, 128, 128)
+            Services.Lighting.FogEnd = 100000
+        end
+        
+        -- Enforce Time
+        if Settings.Misc.TimeChanger then
+             Services.Lighting.ClockTime = Settings.Misc.TimeChanger
+        end
+        
+        task.wait(1)
+    end
+end)
+
+local function IsVisible(Target, Part)
+    local Origin = Camera.CFrame.Position
+    local Direction = (Part.Position - Origin)
+    local RaycastParams = RaycastParams.new()
+    RaycastParams.FilterDescendantsInstances = {LocalPlayer.Character, Camera}
+    RaycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+    RaycastParams.IgnoreWater = true 
+    
+    local Result = Services.Workspace:Raycast(Origin, Direction, RaycastParams)
+    
+    if Result then
+        if Result.Instance:IsDescendantOf(Target.Character) then return true end
+        if Result.Instance.Transparency == 1 then return true end 
+        return false
+    end
+    return true
+end
+
+local function GetClosestPlayer()
+    local Closest = nil
+    local Dist = math.huge
+    local RefPoint = Services.UserInputService:GetMouseLocation()
+    if Services.UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter then
+        RefPoint = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    end
+
+    for _, v in pairs(Services.Players:GetPlayers()) do
+        if v ~= LocalPlayer and v.Character and v.Character:FindFirstChild("HumanoidRootPart") and v.Character:FindFirstChild("Humanoid") and v.Character.Humanoid.Health > 0 then
+            if Settings.Combat.TeamCheck and v.Team == LocalPlayer.Team then continue end
+            if Settings.Combat.ExcludedPlayers[v.Name] then continue end
+            if v.Team and Settings.Combat.ExcludedTeams[v.Team.Name] then continue end
+            
+            local RootPos = v.Character.HumanoidRootPart.Position
+            local ScreenPos, OnScreen = Camera:WorldToViewportPoint(RootPos)
+            if not OnScreen then continue end
+            local Distance = (RefPoint - Vector2.new(ScreenPos.X, ScreenPos.Y)).Magnitude
+            
+            if Distance < Settings.Combat.FOVRadius and Distance < Dist then
+                if Settings.Combat.WallCheck then
+                    if not IsVisible(v, v.Character.Head) then continue end
+                end
+                Closest = v
+                Dist = Distance
+            end
+        end
+    end
+    return Closest
+end
+
+local function IsTriggerDown()
+    local key = Settings.Combat.TriggerKey
+    local type = Settings.Combat.TriggerType
+    if type == "Mouse" then return Services.UserInputService:IsMouseButtonPressed(Enum.UserInputType[key])
+    elseif type == "Keyboard" then return Services.UserInputService:IsKeyDown(Enum.KeyCode[key]) end
+    return false
+end
+
+local LastSwitch = 0
+local CurrentRandomPart = "Head"
+local LockedTarget = nil
+local PreviousLockedTarget = nil 
+local TargetDeadCooldown = false 
+
+Services.RunService:BindToRenderStep("SalvatoreAimLock", Enum.RenderPriority.Camera.Value + 1, function(Delta)
+    if not getgenv().SalvatoreRunning then return end
+    
+    local CurrentRefPoint = Services.UserInputService:GetMouseLocation()
+    if Services.UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter then
+        CurrentRefPoint = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    end
+    
+    if FOVCircle then
+        FOVCircle.Visible = Settings.Combat.ShowFOV and Settings.Combat.Enabled
+        FOVCircle.Radius = Settings.Combat.FOVRadius
+        FOVCircle.Position = CurrentRefPoint
+        local hue = tick() % 5 / 5
+        FOVCircle.Color = Color3.fromHSV(hue, 1, 1)
+    end
+
+    if AuraCircle then
+        local Char = LocalPlayer.Character
+        if Settings.Fling.Aura and Char and Char:FindFirstChild("HumanoidRootPart") then
+            local Vector, OnScreen = Camera:WorldToViewportPoint(Char.HumanoidRootPart.Position)
+            if OnScreen then
+                AuraCircle.Visible = true
+                AuraCircle.Position = Vector2.new(Vector.X, Vector.Y)
+                AuraCircle.Radius = Settings.Fling.AuraRange * 5 
+            else
+                AuraCircle.Visible = false
+            end
+        else
+            AuraCircle.Visible = false
+        end
+    end
+    
+    local IsAiming = false
+    if Settings.Combat.AimMethod == "Toggle" then
+        IsAiming = getgenv().SalvatoreAimToggled
+    else
+        IsAiming = IsTriggerDown()
+    end
+
+    if not IsAiming then 
+        LockedTarget = nil
+        PreviousLockedTarget = nil 
+        TargetDeadCooldown = false 
+    end
+
+    if Settings.Combat.Enabled and IsAiming and not TargetDeadCooldown then
+        if LockedTarget then
+            local IsValid = false
+            if LockedTarget.Character and LockedTarget.Character:FindFirstChild("HumanoidRootPart") and LockedTarget.Character:FindFirstChild("Humanoid") and LockedTarget.Character.Humanoid.Health > 0 then
+                if Settings.Combat.ExcludedPlayers[LockedTarget.Name] then IsValid = false
+                else
+                    if Settings.Combat.StickyAim then 
+                          IsValid = true 
+                    else
+                        local RootPos = LockedTarget.Character.HumanoidRootPart.Position
+                        local ScreenPos, OnScreen = Camera:WorldToViewportPoint(RootPos)
+                        if OnScreen then
+                             local DistToCenter = (CurrentRefPoint - Vector2.new(ScreenPos.X, ScreenPos.Y)).Magnitude
+                             if DistToCenter <= Settings.Combat.FOVRadius then IsValid = true end
+                        end
+                    end
+                end
+            end
+            
+            if IsValid and Settings.Combat.WallCheck then
+                 if not IsVisible(LockedTarget, LockedTarget.Character.Head) then IsValid = false end
+            end
+            
+            if not IsValid then
+                if Settings.Combat.SmartSwitch then
+                    LockedTarget = GetClosestPlayer()
+                    if not LockedTarget then TargetDeadCooldown = true end
+                else LockedTarget = nil; TargetDeadCooldown = true end
+            end
+        end
+
+        if not LockedTarget and not TargetDeadCooldown then LockedTarget = GetClosestPlayer() end
+
+        if LockedTarget and LockedTarget.Character then
+            if Settings.Combat.TpOnAim and LockedTarget ~= PreviousLockedTarget then
+                if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and LockedTarget.Character:FindFirstChild("HumanoidRootPart") then
+                    local MyRoot = LocalPlayer.Character.HumanoidRootPart
+                    local TargRoot = LockedTarget.Character.HumanoidRootPart
+                    local TargCF = TargRoot.CFrame
+                    local Offset = CFrame.new(0, 0, 4) 
+                    
+                    local PosSetting = Settings.Combat.TpPosition
+                    if PosSetting == "Behind" or PosSetting == "Atrás (Costas)" then
+                        Offset = CFrame.new(0, 0, 4)
+                    elseif PosSetting == "Front" or PosSetting == "Frente" then
+                        Offset = CFrame.new(0, 0, -4)
+                    elseif PosSetting == "Above" or PosSetting == "Above (Head)" or PosSetting == "Em Cima (Cabeça)" then
+                        Offset = CFrame.new(0, 8, 0)
+                    elseif PosSetting == "Below" or PosSetting == "Em Baixo" then
+                        Offset = CFrame.new(0, -5, 0)
+                    end
+                    
+                    MyRoot.CFrame = TargCF * Offset
+                    MyRoot.CFrame = CFrame.lookAt(MyRoot.Position, TargRoot.Position)
+                end
+            end
+            PreviousLockedTarget = LockedTarget 
+
+            local AimPartName = Settings.Combat.AimPart
+            if AimPartName == "Random" then
+                if tick() - LastSwitch > 0.8 then
+                    local parts = {"Head", "UpperTorso", "LowerTorso", "HumanoidRootPart"}
+                    CurrentRandomPart = parts[math.random(1, #parts)]; LastSwitch = tick()
+                end
+                AimPartName = CurrentRandomPart
+            end
+            local AimPart = LockedTarget.Character:FindFirstChild(AimPartName) or LockedTarget.Character:FindFirstChild("Head")
+            local TargetRoot = LockedTarget.Character:FindFirstChild("HumanoidRootPart")
+            if AimPart and TargetRoot then
+                local Dist = (TargetRoot.Position - Camera.CFrame.Position).Magnitude
+                local TargetVel = TargetRoot.AssemblyLinearVelocity
+                if TargetVel.Magnitude > 300 then TargetVel = Vector3.new(0,0,0) end 
+                local FinalPrediction = Settings.Combat.Prediction
+                local PredictedPos = AimPart.Position + (TargetVel * FinalPrediction)
+                local currentCF = Camera.CFrame
+                local lookAtCF = CFrame.lookAt(currentCF.Position, PredictedPos)
+                
+                local SmoothingVal = Settings.Combat.Smoothing 
+                if SmoothingVal >= 10 then
+                    Camera.CFrame = lookAtCF 
+                else
+                    local Alpha = (SmoothingVal / 12) 
+                    if SmoothingVal <= 1 then Alpha = 0.04 end 
+                    if SmoothingVal >= 8 then Alpha = 0.4 end 
+                    Camera.CFrame = currentCF:Lerp(lookAtCF, Alpha)
+                end
+            end
+        end
+    end
+end)
+
+local function RemoveESP(Player)
+    if ESPContainer:FindFirstChild(Player.Name) then ESPContainer[Player.Name]:Destroy() end
+    if Player.Character and Player.Character:FindFirstChild("SalvatoreHighlight") then Player.Character.SalvatoreHighlight:Destroy() end
+end
+
+Services.Players.PlayerRemoving:Connect(RemoveESP)
+
+Services.RunService.RenderStepped:Connect(function()
+    if not getgenv().SalvatoreRunning then return end
+    
+    local IsAnyESPOn = Settings.Visuals.BoxESP or Settings.Visuals.NameESP or Settings.Visuals.HealthESP
+
+    if IsAnyESPOn then
+        for _, v in pairs(Services.Players:GetPlayers()) do
+            if v ~= LocalPlayer and v.Character and v.Character:FindFirstChild("HumanoidRootPart") then
+                local ShouldDraw = true
+                if v.Team and Settings.Visuals.ExcludedTeams[v.Team.Name] then ShouldDraw = false end
+                if Settings.Visuals.TeamCheck and v.Team == LocalPlayer.Team then ShouldDraw = false end
+                local Hum = v.Character:FindFirstChild("Humanoid")
+                if not Hum or Hum.Health <= 0 then ShouldDraw = false end
+
+                if not ShouldDraw then
+                    RemoveESP(v)
+                    continue
+                end
+
+                local Holder = ESPContainer:FindFirstChild(v.Name)
+                if not Holder then Holder = Instance.new("Folder"); Holder.Name = v.Name; Holder.Parent = ESPContainer end
+                
+                local ESPColor = Color3.fromRGB(255, 255, 255) 
+                if Settings.Visuals.UseTeamColor and v.Team then ESPColor = v.Team.TeamColor.Color end
+
+                local Highlight = v.Character:FindFirstChild("SalvatoreHighlight")
+                if Settings.Visuals.BoxESP then
+                    if not Highlight then 
+                        pcall(function()
+                            Highlight = Instance.new("Highlight")
+                            Highlight.Name = "SalvatoreHighlight"
+                            Highlight.FillTransparency = 1
+                            Highlight.Parent = v.Character 
+                        end)
+                    end
+                    if Highlight then 
+                        Highlight.Enabled = true
+                        Highlight.OutlineColor = ESPColor 
+                    end
+                else
+                    if Highlight then Highlight:Destroy() end
+                end
+
+                local BB = Holder:FindFirstChild("Info")
+                if Settings.Visuals.NameESP or Settings.Visuals.HealthESP then
+                    if not BB then
+                        BB = Instance.new("BillboardGui"); BB.Name = "Info"; BB.Parent = Holder; BB.Adornee = v.Character.Head; BB.Size = UDim2.new(0, 200, 0, 50); BB.StudsOffset = Vector3.new(0, 2, 0); BB.AlwaysOnTop = true
+                        local Txt = Instance.new("TextLabel"); Txt.Name = "Txt"; Txt.Parent = BB; Txt.BackgroundTransparency = 1; Txt.Size = UDim2.new(1, 0, 1, 0); Txt.Font = Enum.Font.GothamBold; Txt.TextStrokeTransparency = 0; Txt.TextSize = 12
+                    end
+                    
+                    if BB and BB:FindFirstChild("Txt") then
+                        local NameStr = Settings.Visuals.NameESP and v.Name or ""
+                        local HpStr = ""
+                        local HealthColor = Color3.fromRGB(255, 255, 255)
+                        
+                        if Settings.Visuals.HealthESP then
+                            local hp = math.floor(Hum.Health); local max = Hum.MaxHealth; HpStr = string.format(" [%d]", hp)
+                            local hue = (hp/max) * 0.3; HealthColor = Color3.fromHSV(hue, 1, 1)
+                        end
+                        
+                        BB.Txt.RichText = true
+                        local function ToHex(c) return string.format("#%02X%02X%02X", c.R*255, c.G*255, c.B*255) end
+                        
+                        if NameStr ~= "" and HpStr ~= "" then
+                             BB.Txt.Text = string.format('<font color="%s">%s</font>\n<font color="%s">%s</font>', ToHex(ESPColor), NameStr, ToHex(HealthColor), HpStr)
+                        elseif NameStr ~= "" then
+                             BB.Txt.Text = string.format('<font color="%s">%s</font>', ToHex(ESPColor), NameStr)
+                        else
+                             BB.Txt.Text = string.format('<font color="%s">%s</font>', ToHex(HealthColor), HpStr)
+                        end
+                    end
+                else
+                    if BB then BB:Destroy() end
+                end
+            else
+                RemoveESP(v)
+            end
+        end
+    else 
+        ESPContainer:ClearAllChildren() 
+        for _, v in pairs(Services.Players:GetPlayers()) do
+             if v.Character and v.Character:FindFirstChild("SalvatoreHighlight") then
+                v.Character.SalvatoreHighlight:Destroy()
+            end
+        end
+    end
+end)
+
+-- [[ DEATH TRACKING & AUTO TP LOGIC ]]
+task.spawn(function()
+    while getgenv().SalvatoreRunning do
+        pcall(function()
+            local Char = LocalPlayer.Character
+            if Char and Char:FindFirstChild("HumanoidRootPart") and Char:FindFirstChild("Humanoid") then
+                if Char.Humanoid.Health > 0 then
+                    getgenv().SalvatoreTrackingPos = Char.HumanoidRootPart.CFrame
+                end
+            end
+        end)
+        task.wait(0.1)
+    end
+end)
+
+local function ConnectDeathEvent(Char)
+    local Hum = Char:WaitForChild("Humanoid", 10)
+    if Hum then
+        Hum.Died:Connect(function()
+            if getgenv().SalvatoreTrackingPos then
+                getgenv().SalvatoreDeathPos = getgenv().SalvatoreTrackingPos
+            end
+        end)
+    end
+end
+
+LocalPlayer.CharacterAdded:Connect(function(NewChar)
+    ConnectDeathEvent(NewChar)
+    if Settings.Teleport.AutoDeathReturn and getgenv().SalvatoreDeathPos then
+        local Root = NewChar:WaitForChild("HumanoidRootPart", 10)
+        if Root then
+            task.wait(0.6) 
+            Root.CFrame = getgenv().SalvatoreDeathPos
+        end
+    end
+end)
+
+if LocalPlayer.Character then ConnectDeathEvent(LocalPlayer.Character) end
+
+-- [[ HYPER MODE (PROMO SPAM) LOOP ]] --
+task.spawn(function()
+    local PhrasesEN = {
+        "Im so gud with Salvatore Hub 🤒", "Imagine not using Salvatore Hub 🥀", "Salvatore Hub > All Others Scripts 🔥", "Salvatore Hub On Top fr fr fr 🥱",
+        "Salvatore Hub carries me hard 🎒", "My gaming chair is just Salvatore Hub 💺", "Skill issue? Nah, just get Salvatore Hub 🤷‍♂️", "Salvatore Hub users stay winning 🏆",
+        "We simply dont lose with Salvatore Hub 🚫", "Built different with Salvatore Hub 🧬", "Salvatore Hub: The secret sauce 🥫", "2EZ with Salvatore Hub 💤",
+        "Salvatore Hub clutch god ⚡", "Why try when you have Salvatore Hub? 🍵", "Salvatore Hub supremacy 🛐", "Just better with Salvatore Hub 😤",
+        "Salvatore Hub logic > Your logic 🧠", "Cant touch this: Salvatore Hub edition 🏃", "Salvatore Hub: 100% winrate 📈", "Scripting peak = Salvatore Hub 🏔️",
+        "Sorry, Salvatore Hub too strong 💪", "Salvatore Hub diff is real 🥶", "Get on my level (Salvatore Hub level) 📶", "Salvatore Hub makes me pro 🎓",
+        "Lag? No, just Salvatore Hub speed 🐆", "Salvatore Hub never misses 🎯", "Watching you lose vs Me using Salvatore Hub 🍿", "Salvatore Hub is the cheat code ⬆️⬇️",
+        "Dont hate the player, hate Salvatore Hub 😂", "Salvatore Hub: The final boss 👹"
+    }
+
+    local PhrasesPT = {
+        "Sou mto bom com Salvatore Hub 🤒", "Imagine não usar Salvatore Hub 🥀", "Salvatore Hub > Todos Outros Scripts 🔥", "Salvatore Hub no Topo fr fr fr 🥱",
+        "Salvatore Hub me carrega muito 🎒", "Minha cadeira gamer é só o Salvatore Hub 💺", "Skill issue? Não, só pegar o Salvatore Hub 🤷‍♂️", "Usuários do Salvatore Hub só vencem 🏆",
+        "A gente simplesmente não perde com Salvatore Hub 🚫", "Diferenciado com Salvatore Hub 🧬", "Salvatore Hub: O segredo 🥫", "Mto EZ com Salvatore Hub 💤",
+        "Salvatore Hub deus do clutch ⚡", "Pra que tentar se tem Salvatore Hub? 🍵", "Supremacia Salvatore Hub 🛐", "Simplesmente melhor com Salvatore Hub 😤",
+        "Lógica do Salvatore Hub > Sua lógica 🧠", "Intocável: Edição Salvatore Hub 🏃", "Salvatore Hub: 100% taxa de vitória 📈", "Auge do script = Salvatore Hub 🏔️",
+        "Desculpa, Salvatore Hub mto forte 💪", "A diferença do Salvatore Hub é real 🥶", "Chega no meu nível (Nível Salvatore Hub) 📶", "Salvatore Hub me deixa pro 🎓",
+        "Lag? Não, só velocidade do Salvatore Hub 🐆", "Salvatore Hub nunca erra 🎯", "Vendo vc perder vs Eu usando Salvatore Hub 🍿", "Salvatore Hub é o código de trapaça ⬆️⬇️",
+        "Não odeie o jogador, odeie o Salvatore Hub 😂", "Salvatore Hub: O boss final 👹"
+    }
+    
+    while getgenv().SalvatoreRunning do
+        if Settings.Misc.HyperMode then
+            local CurrentList = PhrasesEN
+            if Settings.UI.Language == "🇧🇷 Portuguese" then CurrentList = PhrasesPT end
+            local msg = CurrentList[math.random(1, #CurrentList)]
+            pcall(function()
+                if Services.TextChatService.ChatInputBarConfiguration.TargetTextChannel then
+                    Services.TextChatService.ChatInputBarConfiguration.TargetTextChannel:SendAsync(msg)
+                else
+                    Services.ReplicatedStorage.DefaultChatSystemChatEvents.SayMessageRequest:FireServer(msg, "All")
+                end
+            end)
+            task.wait(Settings.Misc.HyperDelay) 
+        else
+            task.wait(1)
+        end
+    end
+end)
+
+Services.RunService.Heartbeat:Connect(function()
+    if not getgenv().SalvatoreRunning then return end
+    local Char = LocalPlayer.Character
+    if not Char then return end
+    local Hum = Char:FindFirstChild("Humanoid")
+    local Root = Char:FindFirstChild("HumanoidRootPart")
+    if not Hum or not Root then return end
+
+    if Settings.Player.SpeedEnabled then Hum.WalkSpeed = Settings.Player.SpeedAmount end
+    if Settings.Player.JumpEnabled then Hum.UseJumpPower = true; Hum.JumpPower = Settings.Player.JumpAmount end
+    
+    -- NOCLIP LOGIC (Standard)
+    local DoFling = Settings.Fling.Everyone or Settings.Fling.SelectedOnly or Settings.Fling.Aura
+    if Settings.Player.Noclip and not DoFling then
+        for _, part in pairs(Char:GetDescendants()) do 
+            if part:IsA("BasePart") and part.CanCollide then 
+                part.CanCollide = false 
+            end 
+        end
+    end
+
+    if Settings.Player.FlyEnabled then
+        local flySpeed = Settings.Player.FlySpeed
+        local camLV = Camera.CFrame.LookVector
+        local velocity = Vector3.new(0, 0, 0)
+        local keys = Services.UserInputService:GetKeysPressed()
+        local W, A, S, D = false, false, false, false
+        for _, k in pairs(keys) do
+            if k.KeyCode == Enum.KeyCode.W then W = true end
+            if k.KeyCode == Enum.KeyCode.A then A = true end
+            if k.KeyCode == Enum.KeyCode.S then S = true end
+            if k.KeyCode == Enum.KeyCode.D then D = true end
+        end
+        if W then velocity = velocity + camLV end
+        if S then velocity = velocity - camLV end
+        if A then velocity = velocity - Camera.CFrame.RightVector end
+        if D then velocity = velocity + Camera.CFrame.RightVector end
+        Root.AssemblyLinearVelocity = velocity * flySpeed
+        local BV = Root:FindFirstChild("SalvatoreFly") or Instance.new("BodyVelocity", Root)
+        BV.Name = "SalvatoreFly"; BV.MaxForce = Vector3.new(math.huge, math.huge, math.huge); BV.Velocity = velocity * flySpeed
+    else
+        local BV = Root:FindFirstChild("SalvatoreFly")
+        if BV then BV:Destroy() end
+    end
+end)
+
+spawn(function()
+    while getgenv().SalvatoreRunning do wait(10); SaveConfig() end
+end)
+
+Services.Players.LocalPlayer.OnTeleport:Connect(function(State) SaveConfig() end)
+print("Salvatore Hub (Ghost Edition V2.8) Loaded.")
