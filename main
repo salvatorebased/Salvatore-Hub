@@ -1,10 +1,10 @@
 --[[
-    SALVATORE HUB - GHOST EDITION (V2.8)
+    SALVATORE HUB - GHOST EDITION (V3.0)
     
-    Updates V2.8:
-    - MISC: Removido botão "Stop Spectating" (Basta clicar no nome da lista para parar).
-    - MISC: Adicionado "Full Bright" (Remove escuridão/sombras).
-    - MISC: Adicionado "Time Changer" (Muda a hora do jogo).
+    Updates V3.0:
+    - COMBAT: Adicionado Sistema de Alcance (Range Limit).
+    - COMBAT: Adicionado Visualizador de Alcance (Círculo 3D ao redor do player).
+    - CONFIG: Slider de distância vai até 20k (Infinito na prática).
 ]]
 
 -- // 1. INITIALIZATION // --
@@ -37,6 +37,9 @@ getgenv().SalvatoreAimToggled = false
 getgenv().SalvatoreFlingTargets = {} 
 getgenv().SalvatoreSpectating = nil -- Jogador sendo espectado
 
+-- Visuals Globals
+local RangePart = nil -- Parte 3D para o visualizador de alcance
+
 -- FOV Circle
 local FOVCircle = Drawing.new("Circle")
 FOVCircle.Thickness = 1.5
@@ -65,7 +68,7 @@ end
 getgenv().SalvatoreInstance = true
 
 -- // 2. CONFIGURATION // --
-local FileName = "Salvatore_Ghost_V2.8.json"
+local FileName = "Salvatore_Ghost_V3.0.json"
 local Settings = {
     UI = {
         Open = true,
@@ -82,6 +85,8 @@ local Settings = {
         Smoothing = 1,
         FOVRadius = 150,
         ShowFOV = true,
+        AimRange = 2000,       -- NEW: Distância padrão
+        ShowAimRange = false,  -- NEW: Visualizar Distância
         TeamCheck = true,
         TriggerKey = "MouseButton2",
         TriggerType = "Mouse",
@@ -127,8 +132,9 @@ local Settings = {
     Misc = { 
         HyperMode = false,
         HyperDelay = 15,
-        FullBright = false,    -- NEW
-        TimeChanger = 14       -- NEW (Hora padrão tarde)
+        FullBright = false,
+        TimeChangerEnabled = false,
+        TimeChanger = 14
     }
 }
 
@@ -187,6 +193,8 @@ local Translations = {
         Method_Toggle = "Toggle (Fixed)",
         DrawFOV = "Draw FOV",
         FOVRadius = "Radius",
+        AimRangeLabel = "Max Range", -- NEW
+        ShowAimRange = "Show Range (3D)", -- NEW
         Smoothing = "Smoothness",
         Prediction = "Prediction",
         CyclePart = "Part: ",
@@ -249,7 +257,8 @@ local Translations = {
         FPSBoost = "🔥 FPS Boost (Low GFX)",
         FPSBoostDesc = "Makes game look bad for max FPS",
         FullBright = "☀️ Full Bright",
-        TimeChanger = "⏰ Time Changer",
+        TimeChangerToggle = "Enable Time Changer", 
+        TimeChanger = "⏰ Set Time",
         
         MenuBind = "Menu Key",
         AutoSave = "Auto Save",
@@ -271,7 +280,9 @@ local Translations = {
         Method_Hold = "Segurar (Hold)",
         Method_Toggle = "Fixo (Toggle)",
         DrawFOV = "Draw FOV",
-        FOVRadius = "Raio",
+        FOVRadius = "Raio (FOV)",
+        AimRangeLabel = "Alcance Max", -- NEW
+        ShowAimRange = "Mostrar Alcance", -- NEW
         Smoothing = "Suavidade",
         Prediction = "Prediction",
         CyclePart = "Parte: ",
@@ -334,7 +345,8 @@ local Translations = {
         FPSBoost = "🔥 FPS Boost (Aumentar FPS)",
         FPSBoostDesc = "Deixa o jogo feio pra rodar liso",
         FullBright = "☀️ Full Bright (Luz Total)",
-        TimeChanger = "⏰ Time Changer (Hora)",
+        TimeChangerToggle = "Ativar Time Changer", 
+        TimeChanger = "⏰ Ajustar Hora",
         
         MenuBind = "Tecla Menu",
         AutoSave = "Salvar Auto",
@@ -399,6 +411,7 @@ local function SmartCleanup()
     -- Unbind Loops
     pcall(function() Services.RunService:UnbindFromRenderStep("SalvatoreAimLock") end)
     pcall(function() Services.RunService:UnbindFromRenderStep("SalvatoreSpectateLoop") end)
+    pcall(function() Services.RunService:UnbindFromRenderStep("SalvatoreRangeVisual") end) -- New
     
     -- Reset Camera
     if Services.Workspace.CurrentCamera then
@@ -442,9 +455,10 @@ local function SmartCleanup()
         end
     end
     
-    -- Remove Drawings
+    -- Remove Drawings and Parts
     if FOVCircle then FOVCircle:Remove() end
     if AuraCircle then AuraCircle:Remove() end
+    if RangePart then RangePart:Destroy() end -- Destroy Range Part
 
     -- Revert Lighting (Basic Revert)
     Services.Lighting.GlobalShadows = true
@@ -1331,6 +1345,10 @@ function Library:Init()
     self:CreateSlider(CombatPage, T("Smoothing"), "Combat", "Smoothing", 1, 10) 
     self:CreateSlider(CombatPage, T("Prediction"), "Combat", "Prediction", 0, 0.5)
     
+    -- NEW: RANGE SYSTEM UI
+    self:CreateSlider(CombatPage, T("AimRangeLabel"), "Combat", "AimRange", 100, 20000)
+    self:CreateToggle(CombatPage, T("ShowAimRange"), "Combat", "ShowAimRange")
+
     self:CreateButton(CombatPage, T("CyclePart") .. Settings.Combat.AimPart, function()
         local parts = {"Head", "Torso", "Random"}
         local current = table.find(parts, Settings.Combat.AimPart) or 1
@@ -1753,9 +1771,13 @@ function Library:Init()
     
     -- FULL BRIGHT AND TIME
     self:CreateToggle(MiscPage, T("FullBright"), "Misc", "FullBright")
+    
+    self:CreateToggle(MiscPage, T("TimeChangerToggle"), "Misc", "TimeChangerEnabled") -- NOVO TOGGLE
     self:CreateSlider(MiscPage, T("TimeChanger"), "Misc", "TimeChanger", 0, 24, function(val)
         Settings.Misc.TimeChanger = val
-        Services.Lighting.ClockTime = val
+        if Settings.Misc.TimeChangerEnabled then
+             Services.Lighting.ClockTime = val
+        end
     end)
 
     -- FPS BOOST
@@ -2141,12 +2163,48 @@ task.spawn(function()
             Services.Lighting.FogEnd = 100000
         end
         
-        -- Enforce Time
-        if Settings.Misc.TimeChanger then
+        -- Enforce Time ONLY if Enabled
+        if Settings.Misc.TimeChangerEnabled then
              Services.Lighting.ClockTime = Settings.Misc.TimeChanger
         end
         
         task.wait(1)
+    end
+end)
+
+-- [[ RANGE VISUALIZER (3D CIRCLE) LOOP ]] --
+Services.RunService:BindToRenderStep("SalvatoreRangeVisual", Enum.RenderPriority.Camera.Value, function()
+    if not getgenv().SalvatoreRunning then return end
+    
+    if Settings.Combat.ShowAimRange then
+        if not RangePart then
+            RangePart = Instance.new("Part")
+            RangePart.Name = "SalvatoreRange"
+            RangePart.Shape = Enum.PartType.Cylinder
+            RangePart.Transparency = 0.8
+            RangePart.Color = Color3.fromRGB(255, 0, 0)
+            RangePart.Material = Enum.Material.ForceField -- Brilho legal
+            RangePart.Anchored = true
+            RangePart.CanCollide = false
+            RangePart.CastShadow = false
+            RangePart.Parent = Services.Workspace
+        end
+        
+        local Char = LocalPlayer.Character
+        if Char and Char:FindFirstChild("HumanoidRootPart") then
+            local Root = Char.HumanoidRootPart
+            -- Cylinder lies on its side by default, so we rotate 90 on Z to make it flat
+            RangePart.CFrame = Root.CFrame * CFrame.new(0, -2.5, 0) * CFrame.Angles(0, 0, math.rad(90))
+            
+            -- Size: X is thickness (height), Y and Z are diameter
+            local Diameter = Settings.Combat.AimRange * 2
+            RangePart.Size = Vector3.new(0.2, Diameter, Diameter)
+        end
+    else
+        if RangePart then
+            RangePart:Destroy()
+            RangePart = nil
+        end
     end
 end)
 
@@ -2175,6 +2233,9 @@ local function GetClosestPlayer()
     if Services.UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter then
         RefPoint = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
     end
+    
+    local MyRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not MyRoot then return nil end
 
     for _, v in pairs(Services.Players:GetPlayers()) do
         if v ~= LocalPlayer and v.Character and v.Character:FindFirstChild("HumanoidRootPart") and v.Character:FindFirstChild("Humanoid") and v.Character.Humanoid.Health > 0 then
@@ -2183,6 +2244,11 @@ local function GetClosestPlayer()
             if v.Team and Settings.Combat.ExcludedTeams[v.Team.Name] then continue end
             
             local RootPos = v.Character.HumanoidRootPart.Position
+            
+            -- Range Check (World Distance)
+            local DistInStuds = (RootPos - MyRoot.Position).Magnitude
+            if DistInStuds > Settings.Combat.AimRange then continue end
+
             local ScreenPos, OnScreen = Camera:WorldToViewportPoint(RootPos)
             if not OnScreen then continue end
             local Distance = (RefPoint - Vector2.new(ScreenPos.X, ScreenPos.Y)).Magnitude
@@ -2577,4 +2643,4 @@ spawn(function()
 end)
 
 Services.Players.LocalPlayer.OnTeleport:Connect(function(State) SaveConfig() end)
-print("Salvatore Hub (Ghost Edition V2.8) Loaded.")
+print("Salvatore Hub (Ghost Edition V3.0) Loaded.")
