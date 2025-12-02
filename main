@@ -1,9 +1,9 @@
 --[[
-    SALVATORE HUB - GHOST EDITION (V3.1)
+    SALVATORE HUB - GHOST EDITION (V4.0 - STABLE)
     
-    Updates V3.1:
-    - MISC: Adicionado "Modo Streamer" (Esconde nomes de todos e do menu).
-    - MISC: Adicionado "Esconder Chat" (Desativa o chat do Roblox).
+    Updates V4.0:
+    - COMBAT: Spin Bot OTIMIZADO. Removida tremedeira da câmera (Zero Velocity Fix).
+    - SYSTEM: Melhoria na estabilidade dos loops de TP.
 ]]
 
 -- // 1. INITIALIZATION // --
@@ -35,10 +35,13 @@ getgenv().SalvatoreTrackingPos = nil
 getgenv().SalvatoreDeathPos = nil        
 getgenv().SalvatoreAimToggled = false 
 getgenv().SalvatoreFlingTargets = {} 
-getgenv().SalvatoreSpectating = nil -- Jogador sendo espectado
+getgenv().SalvatoreReportTargets = {} 
+getgenv().SalvatoreESPTargets = {} 
+getgenv().SalvatoreSpectating = nil 
+getgenv().TotalReportsSent = 0 
 
 -- Visuals Globals
-local RangePart = nil -- Parte 3D para o visualizador de alcance
+local RangePart = nil 
 
 -- FOV Circle
 local FOVCircle = Drawing.new("Circle")
@@ -58,6 +61,11 @@ AuraCircle.Filled = false
 AuraCircle.Transparency = 0.5
 AuraCircle.Visible = false
 
+-- Helper: Check if player is alive valid
+local function IsAlive(Player)
+    return Player and Player.Character and Player.Character:FindFirstChild("Humanoid") and Player.Character:FindFirstChild("HumanoidRootPart") and Player.Character.Humanoid.Health > 0
+end
+
 -- Prevent Multi-Instance
 if getgenv().SalvatoreInstance then
     local existingUI = (pcall(function() return Services.CoreGui end) and Services.CoreGui or LocalPlayer.PlayerGui):FindFirstChild("SalvatoreHub")
@@ -68,7 +76,7 @@ end
 getgenv().SalvatoreInstance = true
 
 -- // 2. CONFIGURATION // --
-local FileName = "Salvatore_Ghost_V3.1.json"
+local FileName = "Salvatore_Ghost_V4.0.json"
 local Settings = {
     UI = {
         Open = true,
@@ -95,7 +103,9 @@ local Settings = {
         Prediction = 0.135, 
         WallCheck = true,
         TpOnAim = false,            
-        TpPosition = "Behind", 
+        TpPosition = "Behind",
+        TpMode = "Once", -- "Once", "Loop", "SpinBot"
+        SpinSpeed = 5,   -- NEW: 1 to 10
         ExcludedPlayers = {},
         ExcludedTeams = {}
     },
@@ -103,6 +113,7 @@ local Settings = {
         BoxESP = false,
         NameESP = false,
         HealthESP = false,
+        SelectedESP = false,
         TeamCheck = false,
         UseTeamColor = true,
         ExcludedTeams = {}
@@ -129,14 +140,17 @@ local Settings = {
         ClickFling = false,
         Power = 20000 
     },
+    Report = { 
+        Enabled = false,
+        SelectedOnly = false
+    },
     Misc = { 
         HyperMode = false,
         HyperDelay = 15,
         FullBright = false,
         TimeChangerEnabled = false,
         TimeChanger = 14,
-        StreamerMode = false, -- NEW
-        HideChat = false      -- NEW
+        HideChat = false
     }
 }
 
@@ -184,6 +198,7 @@ local Translations = {
         Tab_Player = "👤 Player",
         Tab_Teleport = "🚀 Teleport",
         Tab_Fling = "🌪️ Fling",
+        Tab_Report = "🚨 Report", 
         Tab_Misc = "⚡ Misc",
         Tab_Settings = "⚙️ Settings",
         
@@ -211,15 +226,23 @@ local Translations = {
         IgnorePrefix = "Ignore ",
         
         TpOnAim = "TP on Aim Lock",
+        TpModeLabel = "TP Mode",
+        TpMode_Once = "Once",
+        TpMode_Loop = "Loop (Stick)",
+        TpMode_Spin = "Spin Bot (Orbit)", 
         TpPosLabel = "TP Position",
         TpPos_Behind = "Behind",
         TpPos_Front = "Front",
         TpPos_Above = "Above (Head)",
         TpPos_Below = "Below",
+        SpinSpeed = "Spin Speed", 
+        AimConfigSection = "Aim Configuration", -- NEW
 
         BoxESP = "Box",
         NameESP = "Name",
         HealthESP = "Health",
+        SelectedESP = "Selected Player ESP",
+        ManageESPTargets = "Select ESP Targets",
         SimpleTeamCheck = "Team Check",
         UseTeamColors = "Team Colors",
         TeamManagerTitle = "Teams", 
@@ -242,7 +265,6 @@ local Translations = {
         RefreshPlayers = "Refresh",
         TeleportPlayer = "Teleport",
         
-        -- Fling Tab
         FlingPower = "Fling Power",
         FlingEveryone = "Fling Everyone",
         FlingSelected = "Fling Selected",
@@ -252,16 +274,17 @@ local Translations = {
         ManageTargets = "Select Targets",
         AddToFling = "Add/Remove Selected",
 
-        -- Misc Tab
+        ReportEnable = "Enable Auto Report",
+        ReportStatus = "Reportes enviados: ", 
+        ManageReportTargets = "Select Players to Report",
+        
         HyperMode = "Hyper Mode",
         SpectateTitle = "Spectate Player (Click to Toggle)",
-        -- StopSpectate = "Stop Spectating", -- REMOVED
         FPSBoost = "🔥 FPS Boost (Low GFX)",
         FPSBoostDesc = "Makes game look bad for max FPS",
         FullBright = "☀️ Full Bright",
         TimeChangerToggle = "Enable Time Changer", 
         TimeChanger = "⏰ Set Time",
-        StreamerMode = "🛡️ Streamer Mode",
         HideChat = "💬 Hide Chat",
         
         MenuBind = "Menu Key",
@@ -274,6 +297,7 @@ local Translations = {
         Tab_Player = "👤 Player",
         Tab_Teleport = "🚀 Teleporte",
         Tab_Fling = "🌪️ Fling",
+        Tab_Report = "🚨 Report", 
         Tab_Misc = "⚡ Outros",
         Tab_Settings = "⚙️ Configs",
         
@@ -301,15 +325,23 @@ local Translations = {
         IgnorePrefix = "Ignorar ",
         
         TpOnAim = "TP ao Focar",
+        TpModeLabel = "Modo do TP",
+        TpMode_Once = "Uma Vez (Once)",
+        TpMode_Loop = "Seguir (Loop)",
+        TpMode_Spin = "Spin Bot (Girar)", 
         TpPosLabel = "Posição do TP",
         TpPos_Behind = "Atrás (Costas)",
         TpPos_Front = "Frente",
         TpPos_Above = "Em Cima (Cabeça)",
         TpPos_Below = "Em Baixo",
+        SpinSpeed = "Velocidade Spin", 
+        AimConfigSection = "Configurações de Mira", -- NEW
 
         BoxESP = "Box",
         NameESP = "Nome",
         HealthESP = "Vida",
+        SelectedESP = "ESP Player Selecionado",
+        ManageESPTargets = "Selecionar para ESP",
         SimpleTeamCheck = "Team Check",
         UseTeamColors = "Cores do Time",
         TeamManagerTitle = "Times", 
@@ -332,7 +364,6 @@ local Translations = {
         RefreshPlayers = "Atualizar",
         TeleportPlayer = "Teleportar",
         
-        -- Fling Tab
         FlingPower = "Força do Fling",
         FlingEveryone = "Fling em Todos",
         FlingSelected = "Fling Selecionados",
@@ -342,16 +373,17 @@ local Translations = {
         ManageTargets = "Selecionar Alvos",
         AddToFling = "Add/Remover Alvo",
 
-        -- Misc Tab
+        ReportEnable = "Ativar Auto Report",
+        ReportStatus = "Reportes enviados: ", 
+        ManageReportTargets = "Selecionar Jogadores",
+
         HyperMode = "Hyper Mode",
         SpectateTitle = "Espectar (Clique para Alternar)",
-        -- StopSpectate = "Parar de Espectar", -- REMOVED
         FPSBoost = "🔥 FPS Boost (Aumentar FPS)",
         FPSBoostDesc = "Deixa o jogo feio pra rodar liso",
         FullBright = "☀️ Full Bright (Luz Total)",
         TimeChangerToggle = "Ativar Time Changer", 
         TimeChanger = "⏰ Ajustar Hora",
-        StreamerMode = "🛡️ Modo Streamer (Nomes)",
         HideChat = "💬 Fechar Chat",
         
         MenuBind = "Tecla Menu",
@@ -418,7 +450,6 @@ local function SmartCleanup()
     pcall(function() Services.RunService:UnbindFromRenderStep("SalvatoreAimLock") end)
     pcall(function() Services.RunService:UnbindFromRenderStep("SalvatoreSpectateLoop") end)
     pcall(function() Services.RunService:UnbindFromRenderStep("SalvatoreRangeVisual") end)
-    pcall(function() Services.RunService:UnbindFromRenderStep("SalvatoreStreamerLoop") end)
     
     -- Restore Chat
     pcall(function() Services.StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, true) end)
@@ -480,6 +511,8 @@ local function SmartCleanup()
     getgenv().SalvatoreDeathPos = nil        
     getgenv().SalvatoreAimToggled = nil
     getgenv().SalvatoreFlingTargets = nil
+    getgenv().SalvatoreReportTargets = nil
+    getgenv().SalvatoreESPTargets = nil
     getgenv().SalvatoreSpectating = nil
 end
 
@@ -492,7 +525,9 @@ local ThemeObjects = {
     Frames = {}, Buttons = {}, Labels = {}, Strokes = {}, Toggles = {}, Sliders = {}, Dropdowns = {}, 
     PlayerButtons = {}, -- For Teleport
     FlingButtons = {},  -- For Fling
-    SpectateButtons = {} -- For Spectate
+    ReportButtons = {}, -- For Report
+    ESPButtons = {},    -- For Selected ESP (NEW)
+    SpectateButtons = {} 
 }
 
 -- ANIMATION HELPER --
@@ -550,7 +585,7 @@ function Library:ApplyTheme()
         end
         
         for _, frame in pairs(ThemeObjects.Frames) do
-            if frame.Name ~= "PlayerListContainer" and frame.Name ~= "FlingListContainer" and frame.Name ~= "SpectateListContainer" then
+            if frame.Name ~= "PlayerListContainer" and frame.Name ~= "FlingListContainer" and frame.Name ~= "SpectateListContainer" and frame.Name ~= "ReportListContainer" and frame.Name ~= "ESPListContainer" then
                 frame.BackgroundColor3 = Theme.OptionBG
             end
         end
@@ -580,12 +615,13 @@ function Library:ApplyTheme()
         end
         
         for _, btn in pairs(ThemeObjects.Buttons) do
-             if btn.Name ~= "PlayerButton" and btn.Name ~= "FlingButton" and btn.Name ~= "SpectateButton" then 
+             if btn.Name ~= "PlayerButton" and btn.Name ~= "FlingButton" and btn.Name ~= "SpectateButton" and btn.Name ~= "ReportButton" and btn.Name ~= "ESPButton" then 
                 btn.BackgroundColor3 = Theme.ButtonOff
                 btn.TextColor3 = Theme.Text
              end
         end
 
+        -- Update Selection Colors
         for _, pBtnData in pairs(ThemeObjects.PlayerButtons) do
             if pBtnData.Object and pBtnData.Object.Parent then
                 local isSelected = (SelectedTpTarget == pBtnData.Name)
@@ -599,6 +635,22 @@ function Library:ApplyTheme()
                 local isSelected = getgenv().SalvatoreFlingTargets[fBtnData.Name]
                 fBtnData.Object.BackgroundColor3 = isSelected and Theme.ButtonOn or Theme.OptionBG
                 fBtnData.NameLabel.TextColor3 = isSelected and Theme.Main or Theme.Text
+            end
+        end
+
+        for _, rBtnData in pairs(ThemeObjects.ReportButtons) do
+            if rBtnData.Object and rBtnData.Object.Parent then
+                local isSelected = getgenv().SalvatoreReportTargets[rBtnData.Name]
+                rBtnData.Object.BackgroundColor3 = isSelected and Theme.ButtonOn or Theme.OptionBG
+                rBtnData.NameLabel.TextColor3 = isSelected and Theme.Main or Theme.Text
+            end
+        end
+
+        for _, eBtnData in pairs(ThemeObjects.ESPButtons) do
+            if eBtnData.Object and eBtnData.Object.Parent then
+                local isSelected = getgenv().SalvatoreESPTargets[eBtnData.Name]
+                eBtnData.Object.BackgroundColor3 = isSelected and Theme.ButtonOn or Theme.OptionBG
+                eBtnData.NameLabel.TextColor3 = isSelected and Theme.Main or Theme.Text
             end
         end
 
@@ -750,9 +802,9 @@ function Library:CreateUI()
     HelloLabel.TextYAlignment = Enum.TextYAlignment.Center 
     HelloLabel.Size = UDim2.new(0, 0, 1, 0) 
     HelloLabel.AutomaticSize = Enum.AutomaticSize.X
+    HelloLabel.LayoutOrder = 1 
 
     local NameLabel = Instance.new("TextLabel")
-    NameLabel.Name = "NameLabel" -- ID for streamer mode
     NameLabel.Parent = TextContainer
     NameLabel.BackgroundTransparency = 1
     NameLabel.Text = LocalPlayer.DisplayName
@@ -762,6 +814,7 @@ function Library:CreateUI()
     NameLabel.TextYAlignment = Enum.TextYAlignment.Center 
     NameLabel.Size = UDim2.new(0, 0, 1, 0) 
     NameLabel.AutomaticSize = Enum.AutomaticSize.X
+    NameLabel.LayoutOrder = 2 
     
     local WaveLabel = Instance.new("TextLabel")
     WaveLabel.Parent = TextContainer
@@ -773,6 +826,7 @@ function Library:CreateUI()
     WaveLabel.TextYAlignment = Enum.TextYAlignment.Center 
     WaveLabel.Size = UDim2.new(0, 0, 1, 0) 
     WaveLabel.AutomaticSize = Enum.AutomaticSize.X
+    WaveLabel.LayoutOrder = 3 
 
     local NameGradient = Instance.new("UIGradient")
     NameGradient.Parent = NameLabel
@@ -845,6 +899,7 @@ function Library:CreateUI()
         if input.UserInputType == Enum.UserInputType.MouseMovement then DragInput = input end
     end)
     
+    -- FIXED DRAG LOGIC (Removido o clamp que bugava o AnchorPoint 0.5)
     Services.UserInputService.InputChanged:Connect(function(input)
         if input == DragInput and Dragging then
             local delta = input.Position - DragStart
@@ -1346,11 +1401,37 @@ function Library:Init()
     end)
 
     self:CreateToggle(CombatPage, T("TpOnAim"), "Combat", "TpOnAim")
+    
+    local TpModes = {T("TpMode_Once"), T("TpMode_Loop"), T("TpMode_Spin")}
+    local InitialTpMode = Settings.Combat.TpMode
+    -- Fix mapping if stored as raw text or translate
+    if InitialTpMode == "SpinBot" then InitialTpMode = T("TpMode_Spin")
+    elseif InitialTpMode == "Loop" then InitialTpMode = T("TpMode_Loop")
+    else InitialTpMode = T("TpMode_Once") end
+
+    self:CreateDropdown(CombatPage, T("TpModeLabel"), TpModes, InitialTpMode, function(val)
+        if val == T("TpMode_Loop") then Settings.Combat.TpMode = "Loop"
+        elseif val == T("TpMode_Spin") then Settings.Combat.TpMode = "SpinBot"
+        else Settings.Combat.TpMode = "Once" end
+        SaveConfig()
+    end)
+
     local TpPosOptions = {T("TpPos_Behind"), T("TpPos_Front"), T("TpPos_Above"), T("TpPos_Below")}
     self:CreateDropdown(CombatPage, T("TpPosLabel"), TpPosOptions, Settings.Combat.TpPosition, function(val)
         Settings.Combat.TpPosition = val
         SaveConfig()
     end)
+    
+    self:CreateSlider(CombatPage, T("SpinSpeed"), "Combat", "SpinSpeed", 1, 10)
+    
+    local AimSepLbl = Instance.new("TextLabel")
+    AimSepLbl.Parent = CombatPage
+    AimSepLbl.BackgroundTransparency = 1
+    AimSepLbl.Size = UDim2.new(1, 0, 0, 24)
+    AimSepLbl.Text = T("AimConfigSection")
+    AimSepLbl.Font = Enum.Font.GothamBold
+    AimSepLbl.TextColor3 = Color3.fromRGB(100, 100, 100)
+    AimSepLbl.TextSize = 12
 
     self:CreateSlider(CombatPage, T("FOVRadius"), "Combat", "FOVRadius", 10, 500)
     self:CreateSlider(CombatPage, T("Smoothing"), "Combat", "Smoothing", 1, 10) 
@@ -1429,108 +1510,165 @@ function Library:Init()
     self:CreateToggle(VisualsPage, T("BoxESP"), "Visuals", "BoxESP")
     self:CreateToggle(VisualsPage, T("NameESP"), "Visuals", "NameESP")
     self:CreateToggle(VisualsPage, T("HealthESP"), "Visuals", "HealthESP")
+    self:CreateToggle(VisualsPage, T("SelectedESP"), "Visuals", "SelectedESP") -- NEW
     self:CreateToggle(VisualsPage, T("SimpleTeamCheck"), "Visuals", "TeamCheck")
     self:CreateToggle(VisualsPage, T("UseTeamColors"), "Visuals", "UseTeamColor") 
     
-    local Wrapper = Instance.new("Frame")
-    Wrapper.Parent = VisualsPage
-    Wrapper.BackgroundColor3 = Theme.OptionBG
-    Wrapper.Size = UDim2.new(1, 0, 0, 42)
-    Wrapper.ClipsDescendants = true
-    table.insert(ThemeObjects.Frames, Wrapper)
-    local WCorner = Instance.new("UICorner"); WCorner.CornerRadius = UDim.new(0, 6); WCorner.Parent = Wrapper
-    
-    local HeaderBtn = Instance.new("TextButton")
-    HeaderBtn.Parent = Wrapper
-    HeaderBtn.BackgroundTransparency = 1
-    HeaderBtn.Size = UDim2.new(1, 0, 0, 42)
-    HeaderBtn.Text = ""
-    
-    local Label = Instance.new("TextLabel")
-    Label.Parent = HeaderBtn
-    Label.BackgroundTransparency = 1
-    Label.Position = UDim2.new(0, 12, 0, 0)
-    Label.Size = UDim2.new(0.5, 0, 1, 0)
-    Label.Font = Enum.Font.GothamSemibold
-    Label.TextColor3 = Theme.Text
-    Label.TextXAlignment = Enum.TextXAlignment.Left
-    Label.TextSize = 14
-    Label.Text = T("TeamManagerTitle") 
-    table.insert(ThemeObjects.Labels, Label) 
-
-    local Status = Instance.new("TextLabel")
-    Status.Parent = HeaderBtn
-    Status.BackgroundTransparency = 1
-    Status.Position = UDim2.new(0.5, 0, 0, 0)
-    Status.Size = UDim2.new(0.5, -12, 1, 0)
-    Status.Font = Enum.Font.GothamBold
-    Status.TextColor3 = Theme.Accent
-    Status.TextXAlignment = Enum.TextXAlignment.Right
-    Status.TextSize = 13
-    Status.Text = "v"
-    
-    local TeamsContainer = Instance.new("Frame")
-    TeamsContainer.Parent = Wrapper
-    TeamsContainer.BackgroundTransparency = 1
-    TeamsContainer.Position = UDim2.new(0, 0, 0, 42)
-    TeamsContainer.Size = UDim2.new(1, 0, 0, 0)
-    
-    local TList = Instance.new("UIListLayout")
-    TList.Parent = TeamsContainer
-    TList.SortOrder = Enum.SortOrder.LayoutOrder
-    TList.Padding = UDim.new(0, 2)
-    
-    local Open = false
-    local OptionHeight = 32 
-
-    local function UpdateSize()
-        local Count = 0
-        for _,v in pairs(TeamsContainer:GetChildren()) do
-            if v:IsA("Frame") then Count = Count + 1 end
-        end
-        local TotalHeight = 42 + (Count * (OptionHeight + 2)) + 6
-        if Open then
-            Services.TweenService:Create(Wrapper, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 0, TotalHeight)}):Play()
-            Status.Text = "^"
-        else
-            Services.TweenService:Create(Wrapper, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 0, 42)}):Play()
-            Status.Text = "v"
-        end
-    end
-
-    HeaderBtn.MouseButton1Click:Connect(function()
-        PlaySFX("Click", 1, 1)
-        Open = not Open
-        UpdateSize()
-    end)
+    -- FIXED TEAM MANAGER (Cleaned up duplicate and logic)
+    local TeamsDD = Library:CreateDropdown(VisualsPage, T("TeamManagerTitle"), {}, "", nil)
     
     local function RefreshTeamList()
-        for _, c in pairs(TeamsContainer:GetChildren()) do
-            if c:IsA("Frame") then c:Destroy() end
-        end
+        -- We manually clear inside the CreateDropdown logic by refreshing
         local Teams = Services.Teams:GetTeams()
-        if #Teams == 0 then
-             local EmptyFrame = Instance.new("Frame"); EmptyFrame.Parent = TeamsContainer; EmptyFrame.Size = UDim2.new(1,0,0,32); EmptyFrame.BackgroundTransparency = 1
-             local L = Instance.new("TextLabel", EmptyFrame); L.Size = UDim2.new(1,0,1,0); L.BackgroundTransparency = 1; L.TextColor3 = Color3.fromRGB(150,150,150); L.Text = T("NoTeams"); L.Font = Enum.Font.Gotham; L.TextSize=13
+        -- Clear the internal container logic would need access, but CreateDropdown returns interface
+        -- The easiest way with this library structure is just re-populating.
+        -- However, our dropdown supports 'AddToggle' manually.
+        -- We need to clear it first. The library doesn't expose clear for custom toggles easily.
+        -- Just clearing the children of the container found by name/parent
+        local container = TeamsDD.Container -- Not exposed, so we do a hacky search or accept it appends?
+        -- To do it properly without editing Library:CreateDropdown extensively, we search:
+        local frame = VisualsPage:FindFirstChild("TeamManagerTitle", true) 
+        -- Actually, the dropdown uses a wrapper. Let's just rebuild the logic inside the event:
+        -- Re-building the dropdown content:
+        local wrapper = nil
+        for _, child in pairs(VisualsPage:GetChildren()) do
+            if child:IsA("Frame") then
+                local btn = child:FindFirstChild("TextButton")
+                if btn then
+                    local lbl = btn:FindFirstChild("TextLabel")
+                    if lbl and lbl.Text == T("TeamManagerTitle") then
+                        wrapper = child
+                        break
+                    end
+                end
+            end
         end
-
-        for _, Team in pairs(Teams) do
-            local TeamName = Team.Name
-            if Settings.Visuals.ExcludedTeams[TeamName] == nil then Settings.Visuals.ExcludedTeams[TeamName] = false end
-            local isExcluded = Settings.Visuals.ExcludedTeams[TeamName]
-            self:CreateToggle(TeamsContainer, T("ShowPrefix") .. TeamName, nil, nil, function()
-                Settings.Visuals.ExcludedTeams[TeamName] = not Settings.Visuals.ExcludedTeams[TeamName]
-                SaveConfig()
-                return not Settings.Visuals.ExcludedTeams[TeamName] 
-            end, not isExcluded) 
+        
+        if wrapper then
+            local scroll = wrapper:FindFirstChild("ScrollingFrame")
+            if scroll then
+                for _, c in pairs(scroll:GetChildren()) do 
+                    if c:IsA("Frame") then c:Destroy() end 
+                end
+                
+                for _, Team in pairs(Teams) do
+                    local TeamName = Team.Name
+                    if Settings.Visuals.ExcludedTeams[TeamName] == nil then Settings.Visuals.ExcludedTeams[TeamName] = false end
+                    local isExcluded = Settings.Visuals.ExcludedTeams[TeamName]
+                    TeamsDD:AddToggle(T("ShowPrefix") .. TeamName, function(state)
+                        Settings.Visuals.ExcludedTeams[TeamName] = not state
+                        SaveConfig()
+                    end, not isExcluded)
+                end
+            end
         end
-        if Open then UpdateSize() end
     end
     
     Services.Teams.ChildAdded:Connect(RefreshTeamList)
     Services.Teams.ChildRemoved:Connect(RefreshTeamList)
     RefreshTeamList()
     
+    -- SELECTED ESP LIST UI
+    local ESPLbl = Instance.new("TextLabel"); ESPLbl.Parent = VisualsPage; ESPLbl.BackgroundTransparency=1; ESPLbl.Size=UDim2.new(1,0,0,24); ESPLbl.Text=T("ManageESPTargets"); ESPLbl.Font=Enum.Font.GothamBold; ESPLbl.TextColor3=Color3.fromRGB(100,100,100); ESPLbl.TextSize=12
+
+    local ESPListContainer = Instance.new("Frame")
+    ESPListContainer.Name = "ESPListContainer"
+    ESPListContainer.Parent = VisualsPage
+    ESPListContainer.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+    ESPListContainer.Size = UDim2.new(1, 0, 0, 150) 
+    ESPListContainer.ClipsDescendants = true
+    
+    local ELC_Corner = Instance.new("UICorner")
+    ELC_Corner.CornerRadius = UDim.new(0, 8)
+    ELC_Corner.Parent = ESPListContainer
+    
+    local ESPScroll = Instance.new("ScrollingFrame")
+    ESPScroll.Parent = ESPListContainer
+    ESPScroll.BackgroundTransparency = 1
+    ESPScroll.Size = UDim2.new(1, -8, 1, -8)
+    ESPScroll.Position = UDim2.new(0, 4, 0, 4)
+    ESPScroll.ScrollBarThickness = 0
+    ESPScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    
+    local ES_Layout = Instance.new("UIListLayout")
+    ES_Layout.Parent = ESPScroll
+    ES_Layout.SortOrder = Enum.SortOrder.LayoutOrder
+    ES_Layout.Padding = UDim.new(0, 5)
+
+    local function RefreshESPList()
+        for _, v in pairs(ESPScroll:GetChildren()) do
+            if v:IsA("TextButton") then v:Destroy() end
+        end
+        ThemeObjects.ESPButtons = {} 
+        
+        for _, p in pairs(Services.Players:GetPlayers()) do
+            if p ~= LocalPlayer then
+                local EBtn = Instance.new("TextButton")
+                EBtn.Name = "ESPButton"
+                EBtn.Parent = ESPScroll
+                EBtn.Size = UDim2.new(1, 0, 0, 40)
+                
+                local isTarget = getgenv().SalvatoreESPTargets[p.Name]
+                EBtn.BackgroundColor3 = isTarget and Theme.ButtonOn or Theme.OptionBG
+                EBtn.Text = ""
+                EBtn.AutoButtonColor = false
+                
+                local EB_Corner = Instance.new("UICorner")
+                EB_Corner.CornerRadius = UDim.new(0, 6)
+                EB_Corner.Parent = EBtn
+                
+                local Avatar = Instance.new("ImageLabel")
+                Avatar.Parent = EBtn
+                Avatar.BackgroundColor3 = Color3.fromRGB(0,0,0)
+                Avatar.BackgroundTransparency = 0.5
+                Avatar.Size = UDim2.new(0, 32, 0, 32)
+                Avatar.Position = UDim2.new(0, 4, 0, 4)
+                local AvCorner = Instance.new("UICorner"); AvCorner.CornerRadius = UDim.new(1, 0); AvCorner.Parent = Avatar
+                
+                task.spawn(function()
+                    local content = Services.Players:GetUserThumbnailAsync(p.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size48x48)
+                    Avatar.Image = content
+                end)
+                
+                local DispName = Instance.new("TextLabel")
+                DispName.Parent = EBtn
+                DispName.BackgroundTransparency = 1
+                DispName.Position = UDim2.new(0, 45, 0, 0)
+                DispName.Size = UDim2.new(1, -50, 1, 0)
+                DispName.Font = Enum.Font.GothamBold
+                DispName.Text = p.DisplayName
+                DispName.TextColor3 = isTarget and Theme.Main or Theme.Text
+                DispName.TextXAlignment = Enum.TextXAlignment.Left
+                DispName.TextSize = 14
+                
+                table.insert(ThemeObjects.ESPButtons, {
+                    Name = p.Name, Object = EBtn, NameLabel = DispName 
+                })
+
+                EBtn.MouseButton1Click:Connect(function()
+                    if getgenv().SalvatoreESPTargets[p.Name] then
+                        getgenv().SalvatoreESPTargets[p.Name] = nil 
+                        PlaySFX("ToggleOff", 0.8, 1)
+                    else
+                        getgenv().SalvatoreESPTargets[p.Name] = true
+                        PlaySFX("ToggleOn", 1.5, 1)
+                    end
+                    
+                    local newTargetState = getgenv().SalvatoreESPTargets[p.Name]
+                    EBtn.BackgroundColor3 = newTargetState and Theme.ButtonOn or Theme.OptionBG
+                    DispName.TextColor3 = newTargetState and Theme.Main or Theme.Text
+                    
+                    Services.TweenService:Create(EBtn, TweenInfo.new(0.1), {Size = UDim2.new(1, -5, 0, 38)}):Play()
+                    task.wait(0.1)
+                    Services.TweenService:Create(EBtn, TweenInfo.new(0.1), {Size = UDim2.new(1, 0, 0, 40)}):Play()
+                end)
+                
+                Library:AddButtonAnim(EBtn)
+            end
+        end
+    end
+    RefreshESPList()
+
     -- // PLAYER // --
     local PlayerPage = self:CreateTab(T("Tab_Player"))
     self:CreateToggle(PlayerPage, T("SpeedHack"), "Player", "SpeedEnabled")
@@ -1546,7 +1684,7 @@ function Library:Init()
     local TeleportPage = self:CreateTab(T("Tab_Teleport"))
     self:CreateToggle(TeleportPage, T("AutoDeath"), "Teleport", "AutoDeathReturn")
     self:CreateButton(TeleportPage, T("TeleportDeath"), function()
-        if getgenv().SalvatoreDeathPos and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+        if getgenv().SalvatoreDeathPos and IsAlive(LocalPlayer) then
             LocalPlayer.Character.HumanoidRootPart.CFrame = getgenv().SalvatoreDeathPos
         end
     end)
@@ -1647,7 +1785,7 @@ function Library:Init()
     self:CreateButton(TeleportPage, T("TeleportPlayer"), function()
         if SelectedTpTarget then
             local Target = Services.Players:FindFirstChild(SelectedTpTarget)
-            if Target and Target.Character and Target.Character:FindFirstChild("HumanoidRootPart") and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+            if IsAlive(Target) and IsAlive(LocalPlayer) then
                 LocalPlayer.Character.HumanoidRootPart.CFrame = Target.Character.HumanoidRootPart.CFrame
             end
         end
@@ -1776,7 +1914,165 @@ function Library:Init()
     end
     
     RefreshFlingList()
+
+    -- // REPORT TAB (NEW) // --
+    local ReportPage = self:CreateTab(T("Tab_Report"))
     
+    self:CreateToggle(ReportPage, T("ReportEnable"), "Report", "Enabled")
+    
+    -- REPORT COUNTER WITH GRADIENT
+    local ReportStatusContainer = Instance.new("Frame")
+    ReportStatusContainer.Parent = ReportPage
+    ReportStatusContainer.BackgroundTransparency = 1
+    ReportStatusContainer.Size = UDim2.new(1, 0, 0, 24)
+    
+    local ReportStatusText = Instance.new("TextLabel")
+    ReportStatusText.Parent = ReportStatusContainer
+    ReportStatusText.BackgroundTransparency = 1
+    ReportStatusText.Size = UDim2.new(0.5, 0, 1, 0)
+    ReportStatusText.Position = UDim2.new(0, 10, 0, 0)
+    ReportStatusText.Text = T("ReportStatus")
+    ReportStatusText.Font = Enum.Font.GothamBold
+    ReportStatusText.TextColor3 = Color3.fromRGB(200, 200, 200)
+    ReportStatusText.TextSize = 14
+    ReportStatusText.TextXAlignment = Enum.TextXAlignment.Left
+
+    local ReportCounter = Instance.new("TextLabel")
+    ReportCounter.Parent = ReportStatusContainer
+    ReportCounter.BackgroundTransparency = 1
+    ReportCounter.Size = UDim2.new(0.5, 0, 1, 0)
+    ReportCounter.Position = UDim2.new(0.35, 0, 0, 0)
+    ReportCounter.Text = "0"
+    ReportCounter.Font = Enum.Font.GothamBlack
+    ReportCounter.TextColor3 = Color3.fromRGB(255, 255, 255)
+    ReportCounter.TextSize = 16
+    ReportCounter.TextXAlignment = Enum.TextXAlignment.Left
+    
+    local CounterGradient = Instance.new("UIGradient")
+    CounterGradient.Parent = ReportCounter
+    CounterGradient.Color = ColorSequence.new{
+        ColorSequenceKeypoint.new(0.0, Color3.fromRGB(170, 85, 255)), -- Light Purple
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 170, 0)), -- Orange
+        ColorSequenceKeypoint.new(1.0, Color3.fromRGB(255, 0, 0))    -- Red
+    }
+    
+    -- Animate Gradient
+    spawn(function()
+        local t = 0
+        while getgenv().SalvatoreRunning do
+            if not CounterGradient.Parent then break end
+            t = t + 2 -- Speed
+            CounterGradient.Rotation = t % 360
+            -- Update Counter Text from Global
+            ReportCounter.Text = tostring(getgenv().TotalReportsSent)
+            Services.RunService.RenderStepped:Wait()
+        end
+    end)
+    
+    local RepLbl = Instance.new("TextLabel"); RepLbl.Parent = ReportPage; RepLbl.BackgroundTransparency=1; RepLbl.Size=UDim2.new(1,0,0,24); RepLbl.Text=T("ManageReportTargets"); RepLbl.Font=Enum.Font.GothamBold; RepLbl.TextColor3=Color3.fromRGB(100,100,100); RepLbl.TextSize=12
+
+    local ReportListContainer = Instance.new("Frame")
+    ReportListContainer.Name = "ReportListContainer"
+    ReportListContainer.Parent = ReportPage
+    ReportListContainer.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+    ReportListContainer.Size = UDim2.new(1, 0, 0, 200) 
+    ReportListContainer.ClipsDescendants = true
+    
+    local RLC_Corner = Instance.new("UICorner")
+    RLC_Corner.CornerRadius = UDim.new(0, 8)
+    RLC_Corner.Parent = ReportListContainer
+    
+    local ReportScroll = Instance.new("ScrollingFrame")
+    ReportScroll.Parent = ReportListContainer
+    ReportScroll.BackgroundTransparency = 1
+    ReportScroll.Size = UDim2.new(1, -8, 1, -8)
+    ReportScroll.Position = UDim2.new(0, 4, 0, 4)
+    ReportScroll.ScrollBarThickness = 0
+    ReportScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    
+    local RS_Layout = Instance.new("UIListLayout")
+    RS_Layout.Parent = ReportScroll
+    RS_Layout.SortOrder = Enum.SortOrder.LayoutOrder
+    RS_Layout.Padding = UDim.new(0, 5)
+
+    local function RefreshReportList()
+        for _, v in pairs(ReportScroll:GetChildren()) do
+            if v:IsA("TextButton") then v:Destroy() end
+        end
+        ThemeObjects.ReportButtons = {} 
+        
+        for _, p in pairs(Services.Players:GetPlayers()) do
+            if p ~= LocalPlayer then
+                local RBtn = Instance.new("TextButton")
+                RBtn.Name = "ReportButton"
+                RBtn.Parent = ReportScroll
+                RBtn.Size = UDim2.new(1, 0, 0, 40)
+                
+                local isTarget = getgenv().SalvatoreReportTargets[p.Name]
+                RBtn.BackgroundColor3 = isTarget and Theme.ButtonOn or Theme.OptionBG
+                RBtn.Text = ""
+                RBtn.AutoButtonColor = false
+                
+                local RB_Corner = Instance.new("UICorner")
+                RB_Corner.CornerRadius = UDim.new(0, 6)
+                RB_Corner.Parent = RBtn
+                
+                local Avatar = Instance.new("ImageLabel")
+                Avatar.Parent = RBtn
+                Avatar.BackgroundColor3 = Color3.fromRGB(0,0,0)
+                Avatar.BackgroundTransparency = 0.5
+                Avatar.Size = UDim2.new(0, 32, 0, 32)
+                Avatar.Position = UDim2.new(0, 4, 0, 4)
+                local AvCorner = Instance.new("UICorner"); AvCorner.CornerRadius = UDim.new(1, 0); AvCorner.Parent = Avatar
+                
+                task.spawn(function()
+                    local content = Services.Players:GetUserThumbnailAsync(p.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size48x48)
+                    Avatar.Image = content
+                end)
+                
+                local DispName = Instance.new("TextLabel")
+                DispName.Parent = RBtn
+                DispName.BackgroundTransparency = 1
+                DispName.Position = UDim2.new(0, 45, 0, 0)
+                DispName.Size = UDim2.new(1, -50, 1, 0)
+                DispName.Font = Enum.Font.GothamBold
+                DispName.Text = p.DisplayName
+                DispName.TextColor3 = isTarget and Theme.Main or Theme.Text
+                DispName.TextXAlignment = Enum.TextXAlignment.Left
+                DispName.TextSize = 14
+                
+                table.insert(ThemeObjects.ReportButtons, {
+                    Name = p.Name, Object = RBtn, NameLabel = DispName 
+                })
+
+                RBtn.MouseButton1Click:Connect(function()
+                    if getgenv().SalvatoreReportTargets[p.Name] then
+                        getgenv().SalvatoreReportTargets[p.Name] = nil -- Remove
+                        PlaySFX("ToggleOff", 0.8, 1)
+                    else
+                        getgenv().SalvatoreReportTargets[p.Name] = true -- Add
+                        PlaySFX("ToggleOn", 1.5, 1)
+                    end
+                    
+                    local newTargetState = getgenv().SalvatoreReportTargets[p.Name]
+                    RBtn.BackgroundColor3 = newTargetState and Theme.ButtonOn or Theme.OptionBG
+                    DispName.TextColor3 = newTargetState and Theme.Main or Theme.Text
+                    
+                    Services.TweenService:Create(RBtn, TweenInfo.new(0.1), {Size = UDim2.new(1, -5, 0, 38)}):Play()
+                    task.wait(0.1)
+                    Services.TweenService:Create(RBtn, TweenInfo.new(0.1), {Size = UDim2.new(1, 0, 0, 40)}):Play()
+                end)
+                
+                Library:AddButtonAnim(RBtn)
+            end
+        end
+    end
+    
+    RefreshReportList()
+    -- Listener updates
+    Services.Players.PlayerAdded:Connect(function() task.wait(1); RefreshPlayerList(); RefreshFlingList(); RefreshSpectateList(); RefreshReportList(); RefreshESPList() end)
+    Services.Players.PlayerRemoving:Connect(function() task.wait(0.1); RefreshPlayerList(); RefreshFlingList(); RefreshSpectateList(); RefreshReportList(); RefreshESPList() end)
+
     -- // MISC (HYPER MODE / SPECTATE / FPS BOOST / FULL BRIGHT / TIME) // --
     local MiscPage = self:CreateTab(T("Tab_Misc"))
     
@@ -1791,14 +2087,12 @@ function Library:Init()
         end
     end)
 
-    -- STREAMER MODE & CHAT
-    self:CreateToggle(MiscPage, T("StreamerMode"), "Misc", "StreamerMode") -- NEW
+    -- CHAT
     self:CreateToggle(MiscPage, T("HideChat"), "Misc", "HideChat", function(state)
-        -- Toggle Chat Immediately
         pcall(function()
             Services.StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, not state)
         end)
-    end) -- NEW
+    end)
 
     -- FPS BOOST
     self:CreateButton(MiscPage, T("FPSBoost"), function()
@@ -1931,7 +2225,7 @@ function Library:Init()
                     if getgenv().SalvatoreSpectating == p.Name then
                         -- Turn Off
                         getgenv().SalvatoreSpectating = nil
-                        if LocalPlayer.Character then Camera.CameraSubject = LocalPlayer.Character.Humanoid end
+                        if IsAlive(LocalPlayer) then Camera.CameraSubject = LocalPlayer.Character.Humanoid end
                     else
                         -- Turn On
                         getgenv().SalvatoreSpectating = p.Name
@@ -2057,7 +2351,7 @@ end)
 
 Services.UserInputService.JumpRequest:Connect(function()
     if not getgenv().SalvatoreRunning then return end
-    if Settings.Player.InfiniteJump and LocalPlayer.Character then
+    if Settings.Player.InfiniteJump and IsAlive(LocalPlayer) then
         local Humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
         if Humanoid then Humanoid:ChangeState("Jumping") end
     end
@@ -2073,102 +2367,104 @@ end
 
 -- [[ SPECTATE LOOP ]] --
 Services.RunService:BindToRenderStep("SalvatoreSpectateLoop", Enum.RenderPriority.Camera.Value, function()
-    if getgenv().SalvatoreRunning and getgenv().SalvatoreSpectating then
-        local Target = Services.Players:FindFirstChild(getgenv().SalvatoreSpectating)
-        if Target and Target.Character and Target.Character:FindFirstChild("Humanoid") then
-            Camera.CameraSubject = Target.Character.Humanoid
-        else
-            -- If target lost/dead, revert to self temporarily
-            if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
-                 Camera.CameraSubject = LocalPlayer.Character.Humanoid
+    pcall(function()
+        if getgenv().SalvatoreRunning and getgenv().SalvatoreSpectating then
+            local Target = Services.Players:FindFirstChild(getgenv().SalvatoreSpectating)
+            if IsAlive(Target) then
+                Camera.CameraSubject = Target.Character.Humanoid
+            else
+                if IsAlive(LocalPlayer) then
+                     Camera.CameraSubject = LocalPlayer.Character.Humanoid
+                end
             end
         end
-    end
+    end)
 end)
 
 -- [[ UNIFIED FLING LOOP ]] --
 task.spawn(function()
     while getgenv().SalvatoreRunning do
-        local DoFling = Settings.Fling.Everyone or Settings.Fling.SelectedOnly or Settings.Fling.Aura
-        
-        if DoFling then
-            local Char = LocalPlayer.Character
-            if Char and Char:FindFirstChild("HumanoidRootPart") then
-                local Root = Char.HumanoidRootPart
-                local Power = Settings.Fling.Power
-                
-                -- Force Collision ON for Fling
-                for _, part in pairs(Char:GetDescendants()) do 
-                    if part:IsA("BasePart") then part.CanCollide = true end 
-                end
-                
-                -- Setup Rotational Velocity
-                local BAV = Root:FindFirstChild("SalvatoreFlingRot")
-                if not BAV then
-                    BAV = Instance.new("BodyAngularVelocity", Root)
-                    BAV.Name = "SalvatoreFlingRot"
-                    BAV.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
-                end
-                BAV.AngularVelocity = Vector3.new(0, Power, 0)
-                
-                local BV = Root:FindFirstChild("SalvatoreFlingVelo")
-                if not BV then
-                    BV = Instance.new("BodyVelocity", Root)
-                    BV.Name = "SalvatoreFlingVelo"
-                    BV.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-                end
-                BV.Velocity = Vector3.new(0, 0, 0) -- Stability
+        pcall(function()
+            local DoFling = Settings.Fling.Everyone or Settings.Fling.SelectedOnly or Settings.Fling.Aura
+            
+            if DoFling then
+                local Char = LocalPlayer.Character
+                if IsAlive(LocalPlayer) then
+                    local Root = Char.HumanoidRootPart
+                    local Power = Settings.Fling.Power
+                    
+                    -- Force Collision ON for Fling
+                    for _, part in pairs(Char:GetDescendants()) do 
+                        if part:IsA("BasePart") then part.CanCollide = true end 
+                    end
+                    
+                    -- Setup Rotational Velocity
+                    local BAV = Root:FindFirstChild("SalvatoreFlingRot")
+                    if not BAV then
+                        BAV = Instance.new("BodyAngularVelocity", Root)
+                        BAV.Name = "SalvatoreFlingRot"
+                        BAV.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+                    end
+                    BAV.AngularVelocity = Vector3.new(0, Power, 0)
+                    
+                    local BV = Root:FindFirstChild("SalvatoreFlingVelo")
+                    if not BV then
+                        BV = Instance.new("BodyVelocity", Root)
+                        BV.Name = "SalvatoreFlingVelo"
+                        BV.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+                    end
+                    BV.Velocity = Vector3.new(0, 0, 0) -- Stability
 
-                -- ITERATE TARGETS
-                for _, Target in pairs(Services.Players:GetPlayers()) do
-                    if Target ~= LocalPlayer and Char:FindFirstChild("HumanoidRootPart") then
-                        if Target.Character and Target.Character:FindFirstChild("HumanoidRootPart") then
-                            local TRoot = Target.Character.HumanoidRootPart
-                            local ShouldFling = false
-                            
-                            -- Mode 1: Everyone
-                            if Settings.Fling.Everyone then 
-                                ShouldFling = true 
-                            end
-                            
-                            -- Mode 2: Selected Only
-                            if Settings.Fling.SelectedOnly and getgenv().SalvatoreFlingTargets[Target.Name] then
-                                ShouldFling = true
-                            end
-                            
-                            -- Mode 3: Aura
-                            if Settings.Fling.Aura then
-                                local Dist = (Root.Position - TRoot.Position).Magnitude
-                                if Dist <= Settings.Fling.AuraRange then
+                    -- ITERATE TARGETS
+                    for _, Target in pairs(Services.Players:GetPlayers()) do
+                        if Target ~= LocalPlayer and IsAlive(LocalPlayer) then
+                            if IsAlive(Target) then
+                                local TRoot = Target.Character.HumanoidRootPart
+                                local ShouldFling = false
+                                
+                                -- Mode 1: Everyone
+                                if Settings.Fling.Everyone then 
+                                    ShouldFling = true 
+                                end
+                                
+                                -- Mode 2: Selected Only
+                                if Settings.Fling.SelectedOnly and getgenv().SalvatoreFlingTargets[Target.Name] then
                                     ShouldFling = true
                                 end
-                            end
+                                
+                                -- Mode 3: Aura
+                                if Settings.Fling.Aura then
+                                    local Dist = (Root.Position - TRoot.Position).Magnitude
+                                    if Dist <= Settings.Fling.AuraRange then
+                                        ShouldFling = true
+                                    end
+                                end
 
-                            if ShouldFling then
-                                local StartTime = tick()
-                                -- Attack Loop (Burst)
-                                while tick() - StartTime < 0.25 and Char:FindFirstChild("HumanoidRootPart") do
-                                    Root.CFrame = TRoot.CFrame -- Inside
-                                    Root.AssemblyLinearVelocity = Vector3.new(0,0,0)
-                                    Services.RunService.Heartbeat:Wait()
+                                if ShouldFling then
+                                    local StartTime = tick()
+                                    -- Attack Loop (Burst)
+                                    while tick() - StartTime < 0.25 and IsAlive(LocalPlayer) do
+                                        Root.CFrame = TRoot.CFrame 
+                                        Root.AssemblyLinearVelocity = Vector3.new(0,0,0)
+                                        Services.RunService.Heartbeat:Wait()
+                                    end
                                 end
                             end
                         end
                     end
+                else
+                    task.wait(1) 
                 end
             else
-                task.wait(1) -- Dead wait
+                local Char = LocalPlayer.Character
+                if Char and Char:FindFirstChild("HumanoidRootPart") then
+                    local Root = Char.HumanoidRootPart
+                     if Root:FindFirstChild("SalvatoreFlingRot") then Root.SalvatoreFlingRot:Destroy() end
+                     if Root:FindFirstChild("SalvatoreFlingVelo") then Root.SalvatoreFlingVelo:Destroy() end
+                end
+                task.wait(0.5)
             end
-        else
-            -- Cleanup Physics if disabled
-            local Char = LocalPlayer.Character
-            if Char and Char:FindFirstChild("HumanoidRootPart") then
-                local Root = Char.HumanoidRootPart
-                 if Root:FindFirstChild("SalvatoreFlingRot") then Root.SalvatoreFlingRot:Destroy() end
-                 if Root:FindFirstChild("SalvatoreFlingVelo") then Root.SalvatoreFlingVelo:Destroy() end
-            end
-            task.wait(0.5)
-        end
+        end)
         task.wait()
     end
 end)
@@ -2183,7 +2479,6 @@ task.spawn(function()
             Services.Lighting.FogEnd = 100000
         end
         
-        -- Enforce Time ONLY if Enabled
         if Settings.Misc.TimeChangerEnabled then
              Services.Lighting.ClockTime = Settings.Misc.TimeChanger
         end
@@ -2195,78 +2490,66 @@ end)
 -- [[ RANGE VISUALIZER (3D CIRCLE) LOOP ]] --
 Services.RunService:BindToRenderStep("SalvatoreRangeVisual", Enum.RenderPriority.Camera.Value, function()
     if not getgenv().SalvatoreRunning then return end
-    
-    if Settings.Combat.ShowAimRange then
-        if not RangePart then
-            RangePart = Instance.new("Part")
-            RangePart.Name = "SalvatoreRange"
-            RangePart.Shape = Enum.PartType.Cylinder
-            RangePart.Transparency = 0.8
-            RangePart.Color = Color3.fromRGB(255, 0, 0)
-            RangePart.Material = Enum.Material.ForceField -- Brilho legal
-            RangePart.Anchored = true
-            RangePart.CanCollide = false
-            RangePart.CastShadow = false
-            RangePart.Parent = Services.Workspace
-        end
-        
-        local Char = LocalPlayer.Character
-        if Char and Char:FindFirstChild("HumanoidRootPart") then
-            local Root = Char.HumanoidRootPart
-            -- Cylinder lies on its side by default, so we rotate 90 on Z to make it flat
-            RangePart.CFrame = Root.CFrame * CFrame.new(0, -2.5, 0) * CFrame.Angles(0, 0, math.rad(90))
+    pcall(function()
+        if Settings.Combat.ShowAimRange then
+            if not RangePart then
+                RangePart = Instance.new("Part")
+                RangePart.Name = "SalvatoreRange"
+                RangePart.Shape = Enum.PartType.Cylinder
+                RangePart.Transparency = 0.8
+                RangePart.Color = Color3.fromRGB(255, 0, 0)
+                RangePart.Material = Enum.Material.ForceField 
+                RangePart.Anchored = true
+                RangePart.CanCollide = false
+                RangePart.CastShadow = false
+                RangePart.Parent = Services.Workspace
+            end
             
-            -- Size: X is thickness (height), Y and Z are diameter
-            local Diameter = Settings.Combat.AimRange * 2
-            RangePart.Size = Vector3.new(0.2, Diameter, Diameter)
+            if IsAlive(LocalPlayer) then
+                local Root = LocalPlayer.Character.HumanoidRootPart
+                -- Fix: Keep Cylinder Flat on Ground (Ignore orientation X/Z of player)
+                local GroundPos = CFrame.new(Root.Position.X, Root.Position.Y - 2.5, Root.Position.Z)
+                RangePart.CFrame = GroundPos * CFrame.Angles(0, 0, math.rad(90))
+                
+                local Diameter = Settings.Combat.AimRange * 2
+                RangePart.Size = Vector3.new(0.2, Diameter, Diameter)
+            end
+        else
+            if RangePart then
+                RangePart:Destroy()
+                RangePart = nil
+            end
         end
-    else
-        if RangePart then
-            RangePart:Destroy()
-            RangePart = nil
-        end
-    end
+    end)
 end)
 
--- [[ STREAMER MODE LOOP ]] --
+-- [[ AUTO REPORT LOOP ]] --
 task.spawn(function()
-    -- Generate fake ID map
-    local FakeNamesMap = {}
+    local ReportReasons = {"Bullying", "Hacking", "Spam", "Scamming", "Dating"}
     
-    local function GetFakeName(player)
-        if player == LocalPlayer then return "Streamer" end
-        if not FakeNamesMap[player.UserId] then
-            FakeNamesMap[player.UserId] = "Player_" .. math.random(1000, 9999)
-        end
-        return FakeNamesMap[player.UserId]
-    end
-
     while getgenv().SalvatoreRunning do
-        if Settings.Misc.StreamerMode then
-            -- 1. Change Player DisplayNames locally
-            for _, p in pairs(Services.Players:GetPlayers()) do
-                if p.DisplayName ~= GetFakeName(p) then
-                    p.DisplayName = GetFakeName(p)
+        if Settings.Report.Enabled then
+            pcall(function()
+                local Targets = {}
+                -- Prioritize selected targets
+                for name, selected in pairs(getgenv().SalvatoreReportTargets) do
+                    if selected then
+                        local p = Services.Players:FindFirstChild(name)
+                        if p then table.insert(Targets, p) end
+                    end
                 end
-            end
-            
-            -- 2. Hide Name in Menu Greeting
-            if MainFrameInstance then
-                local NameLbl = MainFrameInstance:FindFirstChild("NameLabel", true)
-                if NameLbl then
-                    NameLbl.Text = "Streamer"
+                
+                for _, v in pairs(Targets) do
+                    if v ~= LocalPlayer then
+                        local Reason = ReportReasons[math.random(1, #ReportReasons)]
+                        Services.Players:ReportAbuse(v, Reason, "Automated report.")
+                        getgenv().TotalReportsSent = getgenv().TotalReportsSent + 1
+                    end
                 end
-            end
+            end)
         end
-        
-        -- Hide Chat Enforcement (Double Check)
-        if Settings.Misc.HideChat then
-             pcall(function()
-                 Services.StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, false)
-             end)
-        end
-        
-        task.wait(1)
+        -- Random delay to look less like a bot (2 to 5 seconds)
+        task.wait(math.random(2, 5))
     end
 end)
 
@@ -2296,18 +2579,17 @@ local function GetClosestPlayer()
         RefPoint = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
     end
     
-    local MyRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if not MyRoot then return nil end
+    if not IsAlive(LocalPlayer) then return nil end
+    local MyRoot = LocalPlayer.Character.HumanoidRootPart
 
     for _, v in pairs(Services.Players:GetPlayers()) do
-        if v ~= LocalPlayer and v.Character and v.Character:FindFirstChild("HumanoidRootPart") and v.Character:FindFirstChild("Humanoid") and v.Character.Humanoid.Health > 0 then
+        if v ~= LocalPlayer and IsAlive(v) then
             if Settings.Combat.TeamCheck and v.Team == LocalPlayer.Team then continue end
             if Settings.Combat.ExcludedPlayers[v.Name] then continue end
             if v.Team and Settings.Combat.ExcludedTeams[v.Team.Name] then continue end
             
             local RootPos = v.Character.HumanoidRootPart.Position
             
-            -- Range Check (World Distance)
             local DistInStuds = (RootPos - MyRoot.Position).Magnitude
             if DistInStuds > Settings.Combat.AimRange then continue end
 
@@ -2343,138 +2625,165 @@ local TargetDeadCooldown = false
 
 Services.RunService:BindToRenderStep("SalvatoreAimLock", Enum.RenderPriority.Camera.Value + 1, function(Delta)
     if not getgenv().SalvatoreRunning then return end
-    
-    local CurrentRefPoint = Services.UserInputService:GetMouseLocation()
-    if Services.UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter then
-        CurrentRefPoint = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
-    end
-    
-    if FOVCircle then
-        FOVCircle.Visible = Settings.Combat.ShowFOV and Settings.Combat.Enabled
-        FOVCircle.Radius = Settings.Combat.FOVRadius
-        FOVCircle.Position = CurrentRefPoint
-        local hue = tick() % 5 / 5
-        FOVCircle.Color = Color3.fromHSV(hue, 1, 1)
-    end
+    pcall(function()
+        local CurrentRefPoint = Services.UserInputService:GetMouseLocation()
+        if Services.UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter then
+            CurrentRefPoint = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+        end
+        
+        if FOVCircle then
+            FOVCircle.Visible = Settings.Combat.ShowFOV and Settings.Combat.Enabled
+            FOVCircle.Radius = Settings.Combat.FOVRadius
+            FOVCircle.Position = CurrentRefPoint
+            local hue = tick() % 5 / 5
+            FOVCircle.Color = Color3.fromHSV(hue, 1, 1)
+        end
 
-    if AuraCircle then
-        local Char = LocalPlayer.Character
-        if Settings.Fling.Aura and Char and Char:FindFirstChild("HumanoidRootPart") then
-            local Vector, OnScreen = Camera:WorldToViewportPoint(Char.HumanoidRootPart.Position)
-            if OnScreen then
-                AuraCircle.Visible = true
-                AuraCircle.Position = Vector2.new(Vector.X, Vector.Y)
-                AuraCircle.Radius = Settings.Fling.AuraRange * 5 
+        if AuraCircle then
+            if Settings.Fling.Aura and IsAlive(LocalPlayer) then
+                local Vector, OnScreen = Camera:WorldToViewportPoint(LocalPlayer.Character.HumanoidRootPart.Position)
+                if OnScreen then
+                    AuraCircle.Visible = true
+                    AuraCircle.Position = Vector2.new(Vector.X, Vector.Y)
+                    AuraCircle.Radius = Settings.Fling.AuraRange * 5 
+                else
+                    AuraCircle.Visible = false
+                end
             else
                 AuraCircle.Visible = false
             end
-        else
-            AuraCircle.Visible = false
         end
-    end
-    
-    local IsAiming = false
-    if Settings.Combat.AimMethod == "Toggle" then
-        IsAiming = getgenv().SalvatoreAimToggled
-    else
-        IsAiming = IsTriggerDown()
-    end
+        
+        local IsAiming = false
+        if Settings.Combat.AimMethod == "Toggle" then
+            IsAiming = getgenv().SalvatoreAimToggled
+        else
+            IsAiming = IsTriggerDown()
+        end
 
-    if not IsAiming then 
-        LockedTarget = nil
-        PreviousLockedTarget = nil 
-        TargetDeadCooldown = false 
-    end
+        if not IsAiming then 
+            LockedTarget = nil
+            PreviousLockedTarget = nil 
+            TargetDeadCooldown = false 
+        end
 
-    if Settings.Combat.Enabled and IsAiming and not TargetDeadCooldown then
-        if LockedTarget then
-            local IsValid = false
-            if LockedTarget.Character and LockedTarget.Character:FindFirstChild("HumanoidRootPart") and LockedTarget.Character:FindFirstChild("Humanoid") and LockedTarget.Character.Humanoid.Health > 0 then
-                if Settings.Combat.ExcludedPlayers[LockedTarget.Name] then IsValid = false
-                else
-                    if Settings.Combat.StickyAim then 
-                          IsValid = true 
+        if Settings.Combat.Enabled and IsAiming and not TargetDeadCooldown then
+            if LockedTarget then
+                local IsValid = false
+                if IsAlive(LockedTarget) then
+                    if Settings.Combat.ExcludedPlayers[LockedTarget.Name] then IsValid = false
                     else
-                        local RootPos = LockedTarget.Character.HumanoidRootPart.Position
-                        local ScreenPos, OnScreen = Camera:WorldToViewportPoint(RootPos)
-                        if OnScreen then
-                             local DistToCenter = (CurrentRefPoint - Vector2.new(ScreenPos.X, ScreenPos.Y)).Magnitude
-                             if DistToCenter <= Settings.Combat.FOVRadius then IsValid = true end
+                        if Settings.Combat.StickyAim then 
+                              IsValid = true 
+                        else
+                            local RootPos = LockedTarget.Character.HumanoidRootPart.Position
+                            local ScreenPos, OnScreen = Camera:WorldToViewportPoint(RootPos)
+                            if OnScreen then
+                                 local DistToCenter = (CurrentRefPoint - Vector2.new(ScreenPos.X, ScreenPos.Y)).Magnitude
+                                 if DistToCenter <= Settings.Combat.FOVRadius then IsValid = true end
+                            end
                         end
                     end
                 end
-            end
-            
-            if IsValid and Settings.Combat.WallCheck then
-                 if not IsVisible(LockedTarget, LockedTarget.Character.Head) then IsValid = false end
-            end
-            
-            if not IsValid then
-                if Settings.Combat.SmartSwitch then
-                    LockedTarget = GetClosestPlayer()
-                    if not LockedTarget then TargetDeadCooldown = true end
-                else LockedTarget = nil; TargetDeadCooldown = true end
-            end
-        end
-
-        if not LockedTarget and not TargetDeadCooldown then LockedTarget = GetClosestPlayer() end
-
-        if LockedTarget and LockedTarget.Character then
-            if Settings.Combat.TpOnAim and LockedTarget ~= PreviousLockedTarget then
-                if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and LockedTarget.Character:FindFirstChild("HumanoidRootPart") then
-                    local MyRoot = LocalPlayer.Character.HumanoidRootPart
-                    local TargRoot = LockedTarget.Character.HumanoidRootPart
-                    local TargCF = TargRoot.CFrame
-                    local Offset = CFrame.new(0, 0, 4) 
-                    
-                    local PosSetting = Settings.Combat.TpPosition
-                    if PosSetting == "Behind" or PosSetting == "Atrás (Costas)" then
-                        Offset = CFrame.new(0, 0, 4)
-                    elseif PosSetting == "Front" or PosSetting == "Frente" then
-                        Offset = CFrame.new(0, 0, -4)
-                    elseif PosSetting == "Above" or PosSetting == "Above (Head)" or PosSetting == "Em Cima (Cabeça)" then
-                        Offset = CFrame.new(0, 8, 0)
-                    elseif PosSetting == "Below" or PosSetting == "Em Baixo" then
-                        Offset = CFrame.new(0, -5, 0)
-                    end
-                    
-                    MyRoot.CFrame = TargCF * Offset
-                    MyRoot.CFrame = CFrame.lookAt(MyRoot.Position, TargRoot.Position)
-                end
-            end
-            PreviousLockedTarget = LockedTarget 
-
-            local AimPartName = Settings.Combat.AimPart
-            if AimPartName == "Random" then
-                if tick() - LastSwitch > 0.8 then
-                    local parts = {"Head", "UpperTorso", "LowerTorso", "HumanoidRootPart"}
-                    CurrentRandomPart = parts[math.random(1, #parts)]; LastSwitch = tick()
-                end
-                AimPartName = CurrentRandomPart
-            end
-            local AimPart = LockedTarget.Character:FindFirstChild(AimPartName) or LockedTarget.Character:FindFirstChild("Head")
-            local TargetRoot = LockedTarget.Character:FindFirstChild("HumanoidRootPart")
-            if AimPart and TargetRoot then
-                local Dist = (TargetRoot.Position - Camera.CFrame.Position).Magnitude
-                local TargetVel = TargetRoot.AssemblyLinearVelocity
-                if TargetVel.Magnitude > 300 then TargetVel = Vector3.new(0,0,0) end 
-                local FinalPrediction = Settings.Combat.Prediction
-                local PredictedPos = AimPart.Position + (TargetVel * FinalPrediction)
-                local currentCF = Camera.CFrame
-                local lookAtCF = CFrame.lookAt(currentCF.Position, PredictedPos)
                 
-                local SmoothingVal = Settings.Combat.Smoothing 
-                if SmoothingVal >= 10 then
-                    Camera.CFrame = lookAtCF 
-                else
-                    local Alpha = (SmoothingVal / 12) 
-                    if SmoothingVal <= 1 then Alpha = 0.04 end 
-                    if SmoothingVal >= 8 then Alpha = 0.4 end 
-                    Camera.CFrame = currentCF:Lerp(lookAtCF, Alpha)
+                if IsValid and Settings.Combat.WallCheck then
+                     if not IsVisible(LockedTarget, LockedTarget.Character.Head) then IsValid = false end
+                end
+                
+                if not IsValid then
+                    if Settings.Combat.SmartSwitch then
+                        LockedTarget = GetClosestPlayer()
+                        if not LockedTarget then TargetDeadCooldown = true end
+                    else LockedTarget = nil; TargetDeadCooldown = true end
+                end
+            end
+
+            if not LockedTarget and not TargetDeadCooldown then LockedTarget = GetClosestPlayer() end
+
+            if LockedTarget and LockedTarget.Character then
+                if Settings.Combat.TpOnAim then
+                    local shouldTP = false
+                    if Settings.Combat.TpMode == "Loop" or Settings.Combat.TpMode == "SpinBot" then
+                        shouldTP = true
+                    elseif Settings.Combat.TpMode == "Once" and LockedTarget ~= PreviousLockedTarget then
+                        shouldTP = true
+                    end
+
+                    if shouldTP and IsAlive(LocalPlayer) and IsAlive(LockedTarget) then
+                        local MyRoot = LocalPlayer.Character.HumanoidRootPart
+                        local TargRoot = LockedTarget.Character.HumanoidRootPart
+                        
+                        if Settings.Combat.TpMode == "SpinBot" then
+                            -- SPIN BOT LOGIC IMPROVED
+                            local Speed = Settings.Combat.SpinSpeed or 5
+                            local Radius = 12 
+                            -- Use os.clock for smoother time and prevent large number precision issues
+                            local Angle = (os.clock() * Speed) 
+                            
+                            -- Calculate position relative to target
+                            local OffsetVector = Vector3.new(math.cos(Angle) * Radius, 5, math.sin(Angle) * Radius)
+                            local TargetPosition = TargRoot.Position
+                            local NewPosition = TargetPosition + OffsetVector
+                            
+                            -- Set CFrame and Velocity to prevent jitter
+                            MyRoot.CFrame = CFrame.lookAt(NewPosition, TargetPosition)
+                            MyRoot.AssemblyLinearVelocity = Vector3.zero
+                            MyRoot.AssemblyAngularVelocity = Vector3.zero
+                        else
+                            -- STANDARD TP LOGIC
+                            local TargCF = TargRoot.CFrame
+                            local Offset = CFrame.new(0, 0, 4) 
+                            
+                            local PosSetting = Settings.Combat.TpPosition
+                            if PosSetting == "Behind" or PosSetting == "Atrás (Costas)" then
+                                Offset = CFrame.new(0, 0, 4)
+                            elseif PosSetting == "Front" or PosSetting == "Frente" then
+                                Offset = CFrame.new(0, 0, -4)
+                            elseif PosSetting == "Above" or PosSetting == "Above (Head)" or PosSetting == "Em Cima (Cabeça)" then
+                                Offset = CFrame.new(0, 8, 0)
+                            elseif PosSetting == "Below" or PosSetting == "Em Baixo" then
+                                Offset = CFrame.new(0, -5, 0)
+                            end
+                            
+                            MyRoot.CFrame = TargCF * Offset
+                            MyRoot.CFrame = CFrame.lookAt(MyRoot.Position, TargRoot.Position)
+                        end
+                    end
+                end
+                PreviousLockedTarget = LockedTarget 
+
+                local AimPartName = Settings.Combat.AimPart
+                if AimPartName == "Random" then
+                    if tick() - LastSwitch > 0.8 then
+                        local parts = {"Head", "UpperTorso", "LowerTorso", "HumanoidRootPart"}
+                        CurrentRandomPart = parts[math.random(1, #parts)]; LastSwitch = tick()
+                    end
+                    AimPartName = CurrentRandomPart
+                end
+                local AimPart = LockedTarget.Character:FindFirstChild(AimPartName) or LockedTarget.Character:FindFirstChild("Head")
+                local TargetRoot = LockedTarget.Character:FindFirstChild("HumanoidRootPart")
+                if AimPart and TargetRoot then
+                    local Dist = (TargetRoot.Position - Camera.CFrame.Position).Magnitude
+                    local TargetVel = TargetRoot.AssemblyLinearVelocity
+                    if TargetVel.Magnitude > 300 then TargetVel = Vector3.new(0,0,0) end 
+                    local FinalPrediction = Settings.Combat.Prediction
+                    local PredictedPos = AimPart.Position + (TargetVel * FinalPrediction)
+                    local currentCF = Camera.CFrame
+                    local lookAtCF = CFrame.lookAt(currentCF.Position, PredictedPos)
+                    
+                    local SmoothingVal = Settings.Combat.Smoothing 
+                    if SmoothingVal >= 10 then
+                        Camera.CFrame = lookAtCF 
+                    else
+                        local Alpha = (SmoothingVal / 12) 
+                        if SmoothingVal <= 1 then Alpha = 0.04 end 
+                        if SmoothingVal >= 8 then Alpha = 0.4 end 
+                        Camera.CFrame = currentCF:Lerp(lookAtCF, Alpha)
+                    end
                 end
             end
         end
-    end
+    end)
 end)
 
 local function RemoveESP(Player)
@@ -2486,101 +2795,121 @@ Services.Players.PlayerRemoving:Connect(RemoveESP)
 
 Services.RunService.RenderStepped:Connect(function()
     if not getgenv().SalvatoreRunning then return end
-    
-    local IsAnyESPOn = Settings.Visuals.BoxESP or Settings.Visuals.NameESP or Settings.Visuals.HealthESP
+    pcall(function()
+        local IsAnyESPOn = Settings.Visuals.BoxESP or Settings.Visuals.NameESP or Settings.Visuals.HealthESP or Settings.Visuals.SelectedESP
 
-    if IsAnyESPOn then
-        for _, v in pairs(Services.Players:GetPlayers()) do
-            if v ~= LocalPlayer and v.Character and v.Character:FindFirstChild("HumanoidRootPart") then
-                local ShouldDraw = true
-                if v.Team and Settings.Visuals.ExcludedTeams[v.Team.Name] then ShouldDraw = false end
-                if Settings.Visuals.TeamCheck and v.Team == LocalPlayer.Team then ShouldDraw = false end
-                local Hum = v.Character:FindFirstChild("Humanoid")
-                if not Hum or Hum.Health <= 0 then ShouldDraw = false end
-
-                if not ShouldDraw then
-                    RemoveESP(v)
-                    continue
-                end
-
-                local Holder = ESPContainer:FindFirstChild(v.Name)
-                if not Holder then Holder = Instance.new("Folder"); Holder.Name = v.Name; Holder.Parent = ESPContainer end
-                
-                local ESPColor = Color3.fromRGB(255, 255, 255) 
-                if Settings.Visuals.UseTeamColor and v.Team then ESPColor = v.Team.TeamColor.Color end
-
-                local Highlight = v.Character:FindFirstChild("SalvatoreHighlight")
-                if Settings.Visuals.BoxESP then
-                    if not Highlight then 
-                        pcall(function()
-                            Highlight = Instance.new("Highlight")
-                            Highlight.Name = "SalvatoreHighlight"
-                            Highlight.FillTransparency = 1
-                            Highlight.Parent = v.Character 
-                        end)
-                    end
-                    if Highlight then 
-                        Highlight.Enabled = true
-                        Highlight.OutlineColor = ESPColor 
-                    end
-                else
-                    if Highlight then Highlight:Destroy() end
-                end
-
-                local BB = Holder:FindFirstChild("Info")
-                if Settings.Visuals.NameESP or Settings.Visuals.HealthESP then
-                    if not BB then
-                        BB = Instance.new("BillboardGui"); BB.Name = "Info"; BB.Parent = Holder; BB.Adornee = v.Character.Head; BB.Size = UDim2.new(0, 200, 0, 50); BB.StudsOffset = Vector3.new(0, 2, 0); BB.AlwaysOnTop = true
-                        local Txt = Instance.new("TextLabel"); Txt.Name = "Txt"; Txt.Parent = BB; Txt.BackgroundTransparency = 1; Txt.Size = UDim2.new(1, 0, 1, 0); Txt.Font = Enum.Font.GothamBold; Txt.TextStrokeTransparency = 0; Txt.TextSize = 12
+        if IsAnyESPOn then
+            for _, v in pairs(Services.Players:GetPlayers()) do
+                if v ~= LocalPlayer and IsAlive(v) then
+                    local ShouldDraw = true
+                    
+                    local isSelectedTarget = getgenv().SalvatoreESPTargets[v.Name]
+                    
+                    -- LOGIC FIX: Determine visibility
+                    if Settings.Visuals.SelectedESP and isSelectedTarget then
+                        ShouldDraw = true
+                    else
+                        -- If SelectedESP is ON but target NOT selected, hide UNLESS general ESP is on
+                        if Settings.Visuals.SelectedESP and not isSelectedTarget then
+                             if not (Settings.Visuals.BoxESP or Settings.Visuals.NameESP or Settings.Visuals.HealthESP) then
+                                 ShouldDraw = false
+                             end
+                        end
+                        
+                        -- Standard Filters
+                        if v.Team and Settings.Visuals.ExcludedTeams[v.Team.Name] then ShouldDraw = false end
+                        if Settings.Visuals.TeamCheck and v.Team == LocalPlayer.Team then ShouldDraw = false end
                     end
                     
-                    if BB and BB:FindFirstChild("Txt") then
-                        local NameStr = Settings.Visuals.NameESP and v.Name or ""
-                        local HpStr = ""
-                        local HealthColor = Color3.fromRGB(255, 255, 255)
-                        
-                        if Settings.Visuals.HealthESP then
-                            local hp = math.floor(Hum.Health); local max = Hum.MaxHealth; HpStr = string.format(" [%d]", hp)
-                            local hue = (hp/max) * 0.3; HealthColor = Color3.fromHSV(hue, 1, 1)
+                    if not ShouldDraw then
+                        RemoveESP(v)
+                        continue
+                    end
+
+                    local Holder = ESPContainer:FindFirstChild(v.Name)
+                    if not Holder then Holder = Instance.new("Folder"); Holder.Name = v.Name; Holder.Parent = ESPContainer end
+                    
+                    local ESPColor = Color3.fromRGB(255, 255, 255) 
+                    if Settings.Visuals.UseTeamColor and v.Team then ESPColor = v.Team.TeamColor.Color end
+                    
+                    -- RGB Highlight for Selected
+                    if Settings.Visuals.SelectedESP and isSelectedTarget then
+                        local t = tick()
+                        ESPColor = Color3.fromHSV((t % 2)/2, 1, 1) -- Rainbow cycle
+                    end
+
+                    local Highlight = v.Character:FindFirstChild("SalvatoreHighlight")
+                    -- Ensure highlight exists if BoxESP is ON OR (SelectedESP is ON AND Target matches)
+                    if Settings.Visuals.BoxESP or (Settings.Visuals.SelectedESP and isSelectedTarget) then
+                        if not Highlight then 
+                            pcall(function()
+                                Highlight = Instance.new("Highlight")
+                                Highlight.Name = "SalvatoreHighlight"
+                                Highlight.FillTransparency = 1
+                                Highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop 
+                                Highlight.Parent = v.Character 
+                            end)
+                        end
+                        if Highlight then 
+                            Highlight.Enabled = true
+                            Highlight.OutlineColor = ESPColor 
+                        end
+                    else
+                        if Highlight then Highlight:Destroy() end
+                    end
+
+                    local BB = Holder:FindFirstChild("Info")
+                    if Settings.Visuals.NameESP or Settings.Visuals.HealthESP then
+                        if not BB then
+                            BB = Instance.new("BillboardGui"); BB.Name = "Info"; BB.Parent = Holder; BB.Adornee = v.Character.Head; BB.Size = UDim2.new(0, 200, 0, 50); BB.StudsOffset = Vector3.new(0, 2, 0); BB.AlwaysOnTop = true
+                            local Txt = Instance.new("TextLabel"); Txt.Name = "Txt"; Txt.Parent = BB; Txt.BackgroundTransparency = 1; Txt.Size = UDim2.new(1, 0, 1, 0); Txt.Font = Enum.Font.GothamBold; Txt.TextStrokeTransparency = 0; Txt.TextSize = 12
                         end
                         
-                        BB.Txt.RichText = true
-                        local function ToHex(c) return string.format("#%02X%02X%02X", c.R*255, c.G*255, c.B*255) end
-                        
-                        if NameStr ~= "" and HpStr ~= "" then
-                             BB.Txt.Text = string.format('<font color="%s">%s</font>\n<font color="%s">%s</font>', ToHex(ESPColor), NameStr, ToHex(HealthColor), HpStr)
-                        elseif NameStr ~= "" then
-                             BB.Txt.Text = string.format('<font color="%s">%s</font>', ToHex(ESPColor), NameStr)
-                        else
-                             BB.Txt.Text = string.format('<font color="%s">%s</font>', ToHex(HealthColor), HpStr)
+                        if BB and BB:FindFirstChild("Txt") then
+                            local NameStr = Settings.Visuals.NameESP and v.Name or ""
+                            local HpStr = ""
+                            local HealthColor = Color3.fromRGB(255, 255, 255)
+                            
+                            if Settings.Visuals.HealthESP then
+                                local hp = math.floor(v.Character.Humanoid.Health); local max = v.Character.Humanoid.MaxHealth; HpStr = string.format(" [%d]", hp)
+                                local hue = (hp/max) * 0.3; HealthColor = Color3.fromHSV(hue, 1, 1)
+                            end
+                            
+                            BB.Txt.RichText = true
+                            local function ToHex(c) return string.format("#%02X%02X%02X", c.R*255, c.G*255, c.B*255) end
+                            
+                            if NameStr ~= "" and HpStr ~= "" then
+                                 BB.Txt.Text = string.format('<font color="%s">%s</font>\n<font color="%s">%s</font>', ToHex(ESPColor), NameStr, ToHex(HealthColor), HpStr)
+                            elseif NameStr ~= "" then
+                                 BB.Txt.Text = string.format('<font color="%s">%s</font>', ToHex(ESPColor), NameStr)
+                            else
+                                 BB.Txt.Text = string.format('<font color="%s">%s</font>', ToHex(HealthColor), HpStr)
+                            end
                         end
+                    else
+                        if BB then BB:Destroy() end
                     end
                 else
-                    if BB then BB:Destroy() end
+                    RemoveESP(v)
                 end
-            else
-                RemoveESP(v)
+            end
+        else 
+            ESPContainer:ClearAllChildren() 
+            for _, v in pairs(Services.Players:GetPlayers()) do
+                 if v.Character and v.Character:FindFirstChild("SalvatoreHighlight") then
+                    v.Character.SalvatoreHighlight:Destroy()
+                end
             end
         end
-    else 
-        ESPContainer:ClearAllChildren() 
-        for _, v in pairs(Services.Players:GetPlayers()) do
-             if v.Character and v.Character:FindFirstChild("SalvatoreHighlight") then
-                v.Character.SalvatoreHighlight:Destroy()
-            end
-        end
-    end
+    end)
 end)
 
 -- [[ DEATH TRACKING & AUTO TP LOGIC ]]
 task.spawn(function()
     while getgenv().SalvatoreRunning do
         pcall(function()
-            local Char = LocalPlayer.Character
-            if Char and Char:FindFirstChild("HumanoidRootPart") and Char:FindFirstChild("Humanoid") then
-                if Char.Humanoid.Health > 0 then
-                    getgenv().SalvatoreTrackingPos = Char.HumanoidRootPart.CFrame
-                end
+            if IsAlive(LocalPlayer) then
+                getgenv().SalvatoreTrackingPos = LocalPlayer.Character.HumanoidRootPart.CFrame
             end
         end)
         task.wait(0.1)
@@ -2656,48 +2985,50 @@ end)
 
 Services.RunService.Heartbeat:Connect(function()
     if not getgenv().SalvatoreRunning then return end
-    local Char = LocalPlayer.Character
-    if not Char then return end
-    local Hum = Char:FindFirstChild("Humanoid")
-    local Root = Char:FindFirstChild("HumanoidRootPart")
-    if not Hum or not Root then return end
+    pcall(function()
+        local Char = LocalPlayer.Character
+        if not Char then return end
+        local Hum = Char:FindFirstChild("Humanoid")
+        local Root = Char:FindFirstChild("HumanoidRootPart")
+        if not Hum or not Root then return end
 
-    if Settings.Player.SpeedEnabled then Hum.WalkSpeed = Settings.Player.SpeedAmount end
-    if Settings.Player.JumpEnabled then Hum.UseJumpPower = true; Hum.JumpPower = Settings.Player.JumpAmount end
-    
-    -- NOCLIP LOGIC (Standard)
-    local DoFling = Settings.Fling.Everyone or Settings.Fling.SelectedOnly or Settings.Fling.Aura
-    if Settings.Player.Noclip and not DoFling then
-        for _, part in pairs(Char:GetDescendants()) do 
-            if part:IsA("BasePart") and part.CanCollide then 
-                part.CanCollide = false 
-            end 
+        if Settings.Player.SpeedEnabled then Hum.WalkSpeed = Settings.Player.SpeedAmount end
+        if Settings.Player.JumpEnabled then Hum.UseJumpPower = true; Hum.JumpPower = Settings.Player.JumpAmount end
+        
+        -- NOCLIP LOGIC (Standard)
+        local DoFling = Settings.Fling.Everyone or Settings.Fling.SelectedOnly or Settings.Fling.Aura
+        if Settings.Player.Noclip and not DoFling then
+            for _, part in pairs(Char:GetDescendants()) do 
+                if part:IsA("BasePart") and part.CanCollide then 
+                    part.CanCollide = false 
+                end 
+            end
         end
-    end
 
-    if Settings.Player.FlyEnabled then
-        local flySpeed = Settings.Player.FlySpeed
-        local camLV = Camera.CFrame.LookVector
-        local velocity = Vector3.new(0, 0, 0)
-        local keys = Services.UserInputService:GetKeysPressed()
-        local W, A, S, D = false, false, false, false
-        for _, k in pairs(keys) do
-            if k.KeyCode == Enum.KeyCode.W then W = true end
-            if k.KeyCode == Enum.KeyCode.A then A = true end
-            if k.KeyCode == Enum.KeyCode.S then S = true end
-            if k.KeyCode == Enum.KeyCode.D then D = true end
+        if Settings.Player.FlyEnabled then
+            local flySpeed = Settings.Player.FlySpeed
+            local camLV = Camera.CFrame.LookVector
+            local velocity = Vector3.new(0, 0, 0)
+            local keys = Services.UserInputService:GetKeysPressed()
+            local W, A, S, D = false, false, false, false
+            for _, k in pairs(keys) do
+                if k.KeyCode == Enum.KeyCode.W then W = true end
+                if k.KeyCode == Enum.KeyCode.A then A = true end
+                if k.KeyCode == Enum.KeyCode.S then S = true end
+                if k.KeyCode == Enum.KeyCode.D then D = true end
+            end
+            if W then velocity = velocity + camLV end
+            if S then velocity = velocity - camLV end
+            if A then velocity = velocity - Camera.CFrame.RightVector end
+            if D then velocity = velocity + Camera.CFrame.RightVector end
+            Root.AssemblyLinearVelocity = velocity * flySpeed
+            local BV = Root:FindFirstChild("SalvatoreFly") or Instance.new("BodyVelocity", Root)
+            BV.Name = "SalvatoreFly"; BV.MaxForce = Vector3.new(math.huge, math.huge, math.huge); BV.Velocity = velocity * flySpeed
+        else
+            local BV = Root:FindFirstChild("SalvatoreFly")
+            if BV then BV:Destroy() end
         end
-        if W then velocity = velocity + camLV end
-        if S then velocity = velocity - camLV end
-        if A then velocity = velocity - Camera.CFrame.RightVector end
-        if D then velocity = velocity + Camera.CFrame.RightVector end
-        Root.AssemblyLinearVelocity = velocity * flySpeed
-        local BV = Root:FindFirstChild("SalvatoreFly") or Instance.new("BodyVelocity", Root)
-        BV.Name = "SalvatoreFly"; BV.MaxForce = Vector3.new(math.huge, math.huge, math.huge); BV.Velocity = velocity * flySpeed
-    else
-        local BV = Root:FindFirstChild("SalvatoreFly")
-        if BV then BV:Destroy() end
-    end
+    end)
 end)
 
 spawn(function()
@@ -2705,4 +3036,4 @@ spawn(function()
 end)
 
 Services.Players.LocalPlayer.OnTeleport:Connect(function(State) SaveConfig() end)
-print("Salvatore Hub (Ghost Edition V3.1) Loaded.")
+print("Salvatore Hub (Ghost Edition V4.0 Stable) Loaded.")
