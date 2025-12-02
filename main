@@ -1,10 +1,9 @@
 --[[
-    SALVATORE HUB - GHOST EDITION (V3.0)
+    SALVATORE HUB - GHOST EDITION (V3.1)
     
-    Updates V3.0:
-    - COMBAT: Adicionado Sistema de Alcance (Range Limit).
-    - COMBAT: Adicionado Visualizador de Alcance (Círculo 3D ao redor do player).
-    - CONFIG: Slider de distância vai até 20k (Infinito na prática).
+    Updates V3.1:
+    - MISC: Adicionado "Modo Streamer" (Esconde nomes de todos e do menu).
+    - MISC: Adicionado "Esconder Chat" (Desativa o chat do Roblox).
 ]]
 
 -- // 1. INITIALIZATION // --
@@ -21,7 +20,8 @@ local Services = {
     TextChatService = game:GetService("TextChatService"),
     SoundService = game:GetService("SoundService"),
     Lighting = game:GetService("Lighting"),
-    MaterialService = game:GetService("MaterialService")
+    MaterialService = game:GetService("MaterialService"),
+    StarterGui = game:GetService("StarterGui")
 }
 
 local LocalPlayer = Services.Players.LocalPlayer
@@ -68,7 +68,7 @@ end
 getgenv().SalvatoreInstance = true
 
 -- // 2. CONFIGURATION // --
-local FileName = "Salvatore_Ghost_V3.0.json"
+local FileName = "Salvatore_Ghost_V3.1.json"
 local Settings = {
     UI = {
         Open = true,
@@ -85,8 +85,8 @@ local Settings = {
         Smoothing = 1,
         FOVRadius = 150,
         ShowFOV = true,
-        AimRange = 2000,       -- NEW: Distância padrão
-        ShowAimRange = false,  -- NEW: Visualizar Distância
+        AimRange = 2000,
+        ShowAimRange = false,
         TeamCheck = true,
         TriggerKey = "MouseButton2",
         TriggerType = "Mouse",
@@ -134,7 +134,9 @@ local Settings = {
         HyperDelay = 15,
         FullBright = false,
         TimeChangerEnabled = false,
-        TimeChanger = 14
+        TimeChanger = 14,
+        StreamerMode = false, -- NEW
+        HideChat = false      -- NEW
     }
 }
 
@@ -193,8 +195,8 @@ local Translations = {
         Method_Toggle = "Toggle (Fixed)",
         DrawFOV = "Draw FOV",
         FOVRadius = "Radius",
-        AimRangeLabel = "Max Range", -- NEW
-        ShowAimRange = "Show Range (3D)", -- NEW
+        AimRangeLabel = "Max Range",
+        ShowAimRange = "Show Range (3D)",
         Smoothing = "Smoothness",
         Prediction = "Prediction",
         CyclePart = "Part: ",
@@ -259,6 +261,8 @@ local Translations = {
         FullBright = "☀️ Full Bright",
         TimeChangerToggle = "Enable Time Changer", 
         TimeChanger = "⏰ Set Time",
+        StreamerMode = "🛡️ Streamer Mode",
+        HideChat = "💬 Hide Chat",
         
         MenuBind = "Menu Key",
         AutoSave = "Auto Save",
@@ -281,8 +285,8 @@ local Translations = {
         Method_Toggle = "Fixo (Toggle)",
         DrawFOV = "Draw FOV",
         FOVRadius = "Raio (FOV)",
-        AimRangeLabel = "Alcance Max", -- NEW
-        ShowAimRange = "Mostrar Alcance", -- NEW
+        AimRangeLabel = "Alcance Max",
+        ShowAimRange = "Mostrar Alcance",
         Smoothing = "Suavidade",
         Prediction = "Prediction",
         CyclePart = "Parte: ",
@@ -347,6 +351,8 @@ local Translations = {
         FullBright = "☀️ Full Bright (Luz Total)",
         TimeChangerToggle = "Ativar Time Changer", 
         TimeChanger = "⏰ Ajustar Hora",
+        StreamerMode = "🛡️ Modo Streamer (Nomes)",
+        HideChat = "💬 Fechar Chat",
         
         MenuBind = "Tecla Menu",
         AutoSave = "Salvar Auto",
@@ -411,8 +417,12 @@ local function SmartCleanup()
     -- Unbind Loops
     pcall(function() Services.RunService:UnbindFromRenderStep("SalvatoreAimLock") end)
     pcall(function() Services.RunService:UnbindFromRenderStep("SalvatoreSpectateLoop") end)
-    pcall(function() Services.RunService:UnbindFromRenderStep("SalvatoreRangeVisual") end) -- New
+    pcall(function() Services.RunService:UnbindFromRenderStep("SalvatoreRangeVisual") end)
+    pcall(function() Services.RunService:UnbindFromRenderStep("SalvatoreStreamerLoop") end)
     
+    -- Restore Chat
+    pcall(function() Services.StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, true) end)
+
     -- Reset Camera
     if Services.Workspace.CurrentCamera then
         Services.Workspace.CurrentCamera.CameraSubject = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
@@ -458,7 +468,7 @@ local function SmartCleanup()
     -- Remove Drawings and Parts
     if FOVCircle then FOVCircle:Remove() end
     if AuraCircle then AuraCircle:Remove() end
-    if RangePart then RangePart:Destroy() end -- Destroy Range Part
+    if RangePart then RangePart:Destroy() end 
 
     -- Revert Lighting (Basic Revert)
     Services.Lighting.GlobalShadows = true
@@ -742,6 +752,7 @@ function Library:CreateUI()
     HelloLabel.AutomaticSize = Enum.AutomaticSize.X
 
     local NameLabel = Instance.new("TextLabel")
+    NameLabel.Name = "NameLabel" -- ID for streamer mode
     NameLabel.Parent = TextContainer
     NameLabel.BackgroundTransparency = 1
     NameLabel.Text = LocalPlayer.DisplayName
@@ -1772,13 +1783,22 @@ function Library:Init()
     -- FULL BRIGHT AND TIME
     self:CreateToggle(MiscPage, T("FullBright"), "Misc", "FullBright")
     
-    self:CreateToggle(MiscPage, T("TimeChangerToggle"), "Misc", "TimeChangerEnabled") -- NOVO TOGGLE
+    self:CreateToggle(MiscPage, T("TimeChangerToggle"), "Misc", "TimeChangerEnabled") 
     self:CreateSlider(MiscPage, T("TimeChanger"), "Misc", "TimeChanger", 0, 24, function(val)
         Settings.Misc.TimeChanger = val
         if Settings.Misc.TimeChangerEnabled then
              Services.Lighting.ClockTime = val
         end
     end)
+
+    -- STREAMER MODE & CHAT
+    self:CreateToggle(MiscPage, T("StreamerMode"), "Misc", "StreamerMode") -- NEW
+    self:CreateToggle(MiscPage, T("HideChat"), "Misc", "HideChat", function(state)
+        -- Toggle Chat Immediately
+        pcall(function()
+            Services.StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, not state)
+        end)
+    end) -- NEW
 
     -- FPS BOOST
     self:CreateButton(MiscPage, T("FPSBoost"), function()
@@ -2205,6 +2225,48 @@ Services.RunService:BindToRenderStep("SalvatoreRangeVisual", Enum.RenderPriority
             RangePart:Destroy()
             RangePart = nil
         end
+    end
+end)
+
+-- [[ STREAMER MODE LOOP ]] --
+task.spawn(function()
+    -- Generate fake ID map
+    local FakeNamesMap = {}
+    
+    local function GetFakeName(player)
+        if player == LocalPlayer then return "Streamer" end
+        if not FakeNamesMap[player.UserId] then
+            FakeNamesMap[player.UserId] = "Player_" .. math.random(1000, 9999)
+        end
+        return FakeNamesMap[player.UserId]
+    end
+
+    while getgenv().SalvatoreRunning do
+        if Settings.Misc.StreamerMode then
+            -- 1. Change Player DisplayNames locally
+            for _, p in pairs(Services.Players:GetPlayers()) do
+                if p.DisplayName ~= GetFakeName(p) then
+                    p.DisplayName = GetFakeName(p)
+                end
+            end
+            
+            -- 2. Hide Name in Menu Greeting
+            if MainFrameInstance then
+                local NameLbl = MainFrameInstance:FindFirstChild("NameLabel", true)
+                if NameLbl then
+                    NameLbl.Text = "Streamer"
+                end
+            end
+        end
+        
+        -- Hide Chat Enforcement (Double Check)
+        if Settings.Misc.HideChat then
+             pcall(function()
+                 Services.StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, false)
+             end)
+        end
+        
+        task.wait(1)
     end
 end)
 
@@ -2643,4 +2705,4 @@ spawn(function()
 end)
 
 Services.Players.LocalPlayer.OnTeleport:Connect(function(State) SaveConfig() end)
-print("Salvatore Hub (Ghost Edition V3.0) Loaded.")
+print("Salvatore Hub (Ghost Edition V3.1) Loaded.")
